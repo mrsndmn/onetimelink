@@ -25,12 +25,12 @@ type jsonError struct {
 	Error string `json:"error"`
 }
 
-func HandleApiGet(memstore *store.SecretStore, urlbase string, fNotify bool) http.Handler {
+func HandleApiGet(memstore *store.SecretStore, urlbase string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id := path.Base(r.URL.Path)
 		// Fetching and counting the click happen in one atomic step, so a
 		// one-time link cannot be served twice by racing requests.
-		entry, ok := memstore.Claim(id, urlbase, Get, ApiGet, r, fNotify)
+		entry, ok := memstore.Claim(id, urlbase, Get, ApiGet)
 		if !ok {
 			log.Printf("entry not found: %s", misc.RedactID(id))
 			jsonRespond(w, http.StatusNotFound, jsonError{"not found"})

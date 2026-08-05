@@ -2,7 +2,6 @@ package store
 
 import (
 	"fmt"
-	"net/http/httptest"
 	"sync"
 	"testing"
 	"time"
@@ -20,7 +19,6 @@ import (
 // Run with -race to have the detector confirm it.
 func TestConcurrentAccess(t *testing.T) {
 	st := New(100000)
-	req := httptest.NewRequest("GET", "/g", nil)
 
 	const workers = 50
 	const iterations = 200
@@ -59,8 +57,8 @@ func TestConcurrentAccess(t *testing.T) {
 				}
 				st.GetEntry(id)
 				st.GetEntryInfoHidden(id, "b", "/g", "/a/")
-				st.Claim(id, "b", "/g", "/a/", req, false)
-				st.Claim(id, "b", "/g", "/a/", req, false)
+				st.Claim(id, "b", "/g", "/a/")
+				st.Claim(id, "b", "/g", "/a/")
 				st.Len()
 			}
 		}(w)
@@ -78,7 +76,6 @@ func TestConcurrentAccess(t *testing.T) {
 // operations, so racing requests could each read a max_clicks=1 secret before
 // any of them deleted it.
 func TestClaimIsAtomic(t *testing.T) {
-	req := httptest.NewRequest("GET", "/g", nil)
 	const trials = 200
 	const readers = 16
 
@@ -96,7 +93,7 @@ func TestClaimIsAtomic(t *testing.T) {
 			go func() {
 				defer wg.Done()
 				<-start
-				if _, ok := st.Claim("theid", "b", "/g", "/a/", req, false); ok {
+				if _, ok := st.Claim("theid", "b", "/g", "/a/"); ok {
 					mu.Lock()
 					served++
 					mu.Unlock()
@@ -115,7 +112,6 @@ func TestClaimIsAtomic(t *testing.T) {
 
 // The same property for a secret allowed a limited number of views.
 func TestClaimRespectsMaxClicksUnderLoad(t *testing.T) {
-	req := httptest.NewRequest("GET", "/g", nil)
 	const maxClicks = 5
 	const readers = 40
 
@@ -133,7 +129,7 @@ func TestClaimRespectsMaxClicksUnderLoad(t *testing.T) {
 			go func() {
 				defer wg.Done()
 				<-start
-				if _, ok := st.Claim("theid", "b", "/g", "/a/", req, false); ok {
+				if _, ok := st.Claim("theid", "b", "/g", "/a/"); ok {
 					mu.Lock()
 					served++
 					mu.Unlock()

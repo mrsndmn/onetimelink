@@ -4,13 +4,9 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"errors"
-	"fmt"
 	"log"
-	"net/http"
 	"sync"
 	"time"
-
-	"github.com/sstark/gjfy/misc"
 )
 
 const (
@@ -197,7 +193,7 @@ func (st *SecretStore) GetEntryInfoHidden(id, urlbase, urlget, urlapiget string)
 // Looking the entry up and counting the click has to happen under one lock:
 // done separately, several concurrent requests can each read a max_clicks=1
 // entry before any of them deletes it, and a one-time link gets served twice.
-func (st *SecretStore) Claim(id, urlbase, urlget, urlapiget string, r *http.Request, fNotify bool) (si StoreEntryInfo, ok bool) {
+func (st *SecretStore) Claim(id, urlbase, urlget, urlapiget string) (si StoreEntryInfo, ok bool) {
 	st.mu.Lock()
 	entry, ok := st.entries[id]
 	if !ok {
@@ -212,36 +208,7 @@ func (st *SecretStore) Claim(id, urlbase, urlget, urlapiget string, r *http.Requ
 	}
 	st.mu.Unlock()
 
-	si = makeInfo(entry, id, urlbase, urlget, urlapiget)
-
-	// Notify outside the lock: sending mail shells out and must not block
-	// every other request while it runs.
-	if fNotify && misc.ValidRecipient(entry.AuthToken) {
-		misc.NotifyMail(entry.AuthToken, clickMessage(id, entry, r))
-	}
-	return si, true
-}
-
-func clickMessage(id string, entry StoreEntry, r *http.Request) string {
-	var remote, method, path, proto, ua string
-	if r != nil {
-		method = r.Method
-		proto = r.Proto
-		if r.URL != nil {
-			path = misc.RedactPath(r.URL.Path)
-		}
-		ua = misc.SanitizeForMail(r.Header.Get("User-Agent"), 200)
-		remote = fmt.Sprintf("%s (%s)", r.RemoteAddr, misc.SanitizeForMail(misc.GetRealIP(r), 200))
-	}
-	return fmt.Sprintf(`
-Id:          %s
-Clicked:     %d time(s)
-Clicks left: %d
-Request:     %s %s %s %s
-User-Agent:  %s
-`,
-		misc.RedactID(id), entry.Clicks, entry.MaxClicks-entry.Clicks,
-		remote, method, path, proto, ua)
+	return makeInfo(entry, id, urlbase, urlget, urlapiget), true
 }
 
 // realExpFactor will scale the given int value to a certain amount of time

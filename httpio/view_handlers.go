@@ -40,10 +40,10 @@ func HandleIndex(fAllowAnonymous bool) http.Handler {
 	})
 }
 
-func HandleGet(memstore *store.SecretStore, urlbase string, fNotify bool, getMessage MessageProvider) http.Handler {
+func HandleGet(memstore *store.SecretStore, urlbase string, getMessage MessageProvider) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id := r.URL.Query().Get("id")
-		entry, ok := memstore.Claim(id, urlbase, Get, ApiGet, r, fNotify)
+		entry, ok := memstore.Claim(id, urlbase, Get, ApiGet)
 		if !ok {
 			w.WriteHeader(http.StatusNotFound)
 			log.Printf("entry not found: %s", misc.RedactID(id))

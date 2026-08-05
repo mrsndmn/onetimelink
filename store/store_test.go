@@ -1,7 +1,6 @@
 package store
 
 import (
-	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -140,10 +139,8 @@ func TestClaimCountsAndDeletes(t *testing.T) {
 	st := New(0)
 	const clicks = 2
 	mustAdd(t, st, "secret", clicks, 1, "auth@example.org", "testid")
-	req := httptest.NewRequest("GET", "/testid", nil)
-
 	for i := 1; i <= clicks; i++ {
-		si, ok := st.Claim("testid", "b", "/g", "/a/", req, false)
+		si, ok := st.Claim("testid", "b", "/g", "/a/")
 		if !ok {
 			t.Fatalf("claim %d failed", i)
 		}
@@ -154,7 +151,7 @@ func TestClaimCountsAndDeletes(t *testing.T) {
 			t.Errorf("claim %d reported %d clicks", i, si.Clicks)
 		}
 	}
-	if _, ok := st.Claim("testid", "b", "/g", "/a/", req, false); ok {
+	if _, ok := st.Claim("testid", "b", "/g", "/a/"); ok {
 		t.Error("entry still claimable after max_clicks was reached")
 	}
 	if _, ok := st.GetEntry("testid"); ok {
@@ -164,8 +161,7 @@ func TestClaimCountsAndDeletes(t *testing.T) {
 
 func TestClaimMissing(t *testing.T) {
 	st := New(0)
-	req := httptest.NewRequest("GET", "/nope", nil)
-	if _, ok := st.Claim("nope", "b", "/g", "/a/", req, false); ok {
+	if _, ok := st.Claim("nope", "b", "/g", "/a/"); ok {
 		t.Error("claiming a non-existing entry succeeded")
 	}
 }
@@ -191,17 +187,5 @@ func TestExpiry(t *testing.T) {
 	}
 	if _, ok := st.GetEntry("longlived"); !ok {
 		t.Error("unexpired entry was dropped")
-	}
-}
-
-func TestClickMessageRedactsID(t *testing.T) {
-	req := httptest.NewRequest("GET", "/api/v1/get/abcdefghijklmnop", nil)
-	req.Header.Set("User-Agent", "curl/8.0")
-	msg := clickMessage("abcdefghijklmnop", StoreEntry{MaxClicks: 1, Clicks: 1}, req)
-	if strings.Contains(msg, "abcdefghijklmnop") {
-		t.Errorf("notification mail contains the full secret id:\n%s", msg)
-	}
-	if !strings.Contains(msg, "abcdef") {
-		t.Errorf("notification mail lost the id prefix entirely:\n%s", msg)
 	}
 }

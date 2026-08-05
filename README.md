@@ -70,7 +70,7 @@ Features
   - Simple html user interface
   - The CSS styling, logo and user message can be customised
   - Simple token based authentication
-  - Email notification
+  - No subprocesses, no outbound connections
 
 Building
 --------
@@ -230,16 +230,18 @@ days.
 Email notifications
 -------------------
 
-To get notified if somebody uses the one time link, add the `-notify` flag to
-the gjfy command line. gjfy will use the email address associated with the
-authentication token that was used when the secret was generated.
+Removed in this fork. Upstream gjfy could mail the creator when a link was
+used, by piping a message into the `mail` command with the `-notify` flag.
 
-This requires that the email sub system of the server where gjfy is running is
-configured properly. In principle, if it is possible to send an email using the
-`mail` command as the gjfy user, email notifications from gjfy should also
-work.
+That was the only place gjfy started an external process, and the message body
+carried client-controlled data (User-Agent, proxy headers). Dropping the
+feature removes the whole class of problems that comes with it — argument
+injection through the recipient, unsanitised input reaching a mail agent, and
+one forked process per click under load — and leaves the server with no
+subprocesses and no outbound connections at all. A test enforces this.
 
-By default, email notification is not enabled.
+The `email` field in `auth.db` is still required: it identifies the account
+that created a secret and is shown in the metadata view.
 
 gjfy-post
 ---------
@@ -295,8 +297,8 @@ deploying it. What changed, and why:
     are size limited, so creating secrets cannot exhaust memory.
   - **Creation and retrieval are rate limited** per peer address.
   - **Auth tokens are compared in constant time**, over the whole database.
-  - **Client-controlled data is sanitised** before being piped into `mail`,
-    and recipient addresses are validated so they cannot be read as flags.
+  - **Email notifications are gone**, and with them the only subprocess gjfy
+    ever started. See the section above.
   - **Runtime config is swapped atomically.** The SIGHUP handler reassigned
     globals that handlers were reading concurrently.
   - The `bou.ke/monkey` test dependency was dropped; the only dependency left

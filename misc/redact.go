@@ -34,9 +34,10 @@ func RedactPath(path string) string {
 	return path
 }
 
-// SanitizeForMail strips control characters from client-controlled data before
-// it is piped into the mail command, and truncates it to max bytes.
-func SanitizeForMail(s string, max int) string {
+// SanitizeForLog strips control characters from client-controlled data before
+// it reaches the log, and truncates it to max bytes. Without this a crafted
+// User-Agent or proxy header can forge additional log lines.
+func SanitizeForLog(s string, max int) string {
 	if len(s) > max {
 		s = s[:max]
 	}

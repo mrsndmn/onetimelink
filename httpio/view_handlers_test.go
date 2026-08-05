@@ -19,7 +19,7 @@ func TestHandleGetShowsAndConsumes(t *testing.T) {
 	if _, err := st.NewEntry("hunter2", 1, 1, "test@example.org", "theid"); err != nil {
 		t.Fatal(err)
 	}
-	h := HandleGet(st, urlbase, false, noMessage)
+	h := HandleGet(st, urlbase, noMessage)
 
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, httptest.NewRequest("GET", "/g?id=theid", nil))
@@ -48,7 +48,7 @@ func TestHandleGetEscapesSecret(t *testing.T) {
 		t.Fatal(err)
 	}
 	rr := httptest.NewRecorder()
-	HandleGet(st, urlbase, false, noMessage).ServeHTTP(rr, httptest.NewRequest("GET", "/g?id=xss", nil))
+	HandleGet(st, urlbase, noMessage).ServeHTTP(rr, httptest.NewRequest("GET", "/g?id=xss", nil))
 
 	if strings.Contains(rr.Body.String(), "<script>") {
 		t.Errorf("secret was not escaped:\n%s", rr.Body.String())
@@ -58,7 +58,7 @@ func TestHandleGetEscapesSecret(t *testing.T) {
 func TestHandleGetMissing(t *testing.T) {
 	st := store.New(0)
 	rr := httptest.NewRecorder()
-	HandleGet(st, urlbase, false, noMessage).ServeHTTP(rr, httptest.NewRequest("GET", "/g?id=nope", nil))
+	HandleGet(st, urlbase, noMessage).ServeHTTP(rr, httptest.NewRequest("GET", "/g?id=nope", nil))
 	if rr.Code != http.StatusNotFound {
 		t.Errorf("got status %v, wanted 404", rr.Code)
 	}

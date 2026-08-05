@@ -51,26 +51,15 @@ func TestRedactPath(t *testing.T) {
 	}
 }
 
-func TestSanitizeForMail(t *testing.T) {
-	got := SanitizeForMail("curl/8.0\nBcc: attacker@example.org\r\n", 200)
+func TestSanitizeForLog(t *testing.T) {
+	got := SanitizeForLog("curl/8.0\nBcc: attacker@example.org\r\n", 200)
 	if strings.ContainsAny(got, "\n\r") {
 		t.Errorf("newlines survived sanitising: %q", got)
 	}
-	if strings.Contains(SanitizeForMail("a\x00b", 200), "\x00") {
+	if strings.Contains(SanitizeForLog("a\x00b", 200), "\x00") {
 		t.Error("NUL byte survived sanitising")
 	}
-	if len(SanitizeForMail(strings.Repeat("x", 500), 100)) > 100 {
+	if len(SanitizeForLog(strings.Repeat("x", 500), 100)) > 100 {
 		t.Error("value was not truncated")
-	}
-}
-
-func TestSanitizeForMailBodyKeepsLines(t *testing.T) {
-	got := SanitizeForMailBody("line one\nline two", 4096)
-	if !strings.Contains(got, "\n") {
-		t.Error("body sanitiser dropped legitimate newlines")
-	}
-	// A lone dot terminates input for some mail agents.
-	if strings.Contains("\n"+SanitizeForMailBody("a\n.\nb", 4096), "\n.\n") {
-		t.Error("lone dot line was not defused")
 	}
 }

@@ -41,9 +41,9 @@ func MakeTokenDB(b []byte) TokenDB {
 			log.Printf("email field empty or missing in entry #%d", i)
 			return nil
 		}
-		if !misc.ValidRecipient(entry.Email) {
-			// A recipient starting with "-" would be read as a flag by
-			// mail(1); anything unparseable is refused as well.
+		if !misc.ValidEmail(entry.Email) {
+			// The address identifies the account that created a secret and
+			// is shown in the metadata view, so it has to be a real address.
 			log.Printf("email field in entry #%d is not a usable address", i)
 			return nil
 		}

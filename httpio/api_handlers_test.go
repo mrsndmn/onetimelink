@@ -46,7 +46,7 @@ func TestHandleApiGet(t *testing.T) {
 	}
 	req := httptest.NewRequest("GET", urlbase+ApiGet+"testid", nil)
 	rr := httptest.NewRecorder()
-	HandleApiGet(st, urlbase, false).ServeHTTP(rr, req)
+	HandleApiGet(st, urlbase).ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusOK {
 		t.Fatalf("got status %v, wanted %v", rr.Code, http.StatusOK)
@@ -71,7 +71,7 @@ func TestHandleApiGetNonExisting(t *testing.T) {
 	st := store.New(0)
 	req := httptest.NewRequest("GET", urlbase+ApiGet+"foo", nil)
 	rr := httptest.NewRecorder()
-	HandleApiGet(st, urlbase, false).ServeHTTP(rr, req)
+	HandleApiGet(st, urlbase).ServeHTTP(rr, req)
 
 	if rr.Code != http.StatusNotFound {
 		t.Errorf("got status %v, wanted %v", rr.Code, http.StatusNotFound)
