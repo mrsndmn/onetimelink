@@ -136,14 +136,8 @@ Use `gjfy server --help` for help.
 
 ### Subcommand `completion`
 
-Use the completion subcommand to generate completion code for one if these shells: bash, fish, powershell, zsh.
-
-E. g. for bash or zsh you can use it by putting something like this in your
-shell startup:
-
-```sh
-source <(gjfy completion zsh)
-```
+Removed in this fork along with cobra, see Hardening. gjfy is started by an
+init system, not typed at a prompt.
 
 Options
 -------
@@ -301,8 +295,13 @@ deploying it. What changed, and why:
     ever started. See the section above.
   - **Runtime config is swapped atomically.** The SIGHUP handler reassigned
     globals that handlers were reading concurrently.
-  - The `bou.ke/monkey` test dependency was dropped; the only dependency left
-    is cobra.
+  - **No dependencies at all.** `go.mod` has no `require` directive and
+    `go.sum` is empty. Upstream compiled cobra and pflag — about 12k lines of
+    third party code, against 1.6k of gjfy's own — in order to parse six flags;
+    for a process holding plaintext secrets in memory, that is supply chain
+    surface bought for nothing. Replaced by `flag` from the standard library.
+    The `completion` subcommand went with it, and the `bou.ke/monkey` test
+    dependency was dropped earlier. A test keeps `go.mod` empty.
 
 What has *not* changed: secrets are still held in memory only and in
 plaintext, so the server can read them, and a restart still discards every

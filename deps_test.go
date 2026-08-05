@@ -43,3 +43,32 @@ func TestNoSubprocessOrMailDependency(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// gjfy builds on the standard library alone. For a service that holds secrets
+// in memory, every third party package is supply chain surface: a compromised
+// release of any of them runs in the same process as the secrets.
+//
+// Upstream pulled in cobra (plus pflag, and mousetrap in the module graph) to
+// parse six flags — around 12k lines of foreign code against 1.6k of our own.
+// If a dependency is ever added back, it should be a deliberate decision, so
+// this test makes it a loud one.
+func TestNoExternalDependencies(t *testing.T) {
+	src, err := os.ReadFile("go.mod")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range strings.Split(string(src), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "//") {
+			continue
+		}
+		if strings.HasPrefix(line, "require") {
+			t.Errorf("go.mod has a require directive: %q", line)
+		}
+	}
+
+	// go.sum only exists once something is downloaded.
+	if info, err := os.Stat("go.sum"); err == nil && info.Size() > 0 {
+		t.Errorf("go.sum is not empty (%d bytes): a dependency crept in", info.Size())
+	}
+}
