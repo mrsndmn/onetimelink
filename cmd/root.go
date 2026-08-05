@@ -12,10 +12,10 @@ var (
 )
 
 var rootCmd = &cobra.Command{
-	Use:   "gjfy",
-	Short: "gjfy one-time links",
+	Use:     "gjfy",
+	Short:   "gjfy one-time links",
 	Version: Version,
-	Long:  `
+	Long: `
 gjfy is a web service and tool for creating and providing one-time clickable links`,
 }
 

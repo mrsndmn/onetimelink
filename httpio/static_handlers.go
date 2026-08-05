@@ -9,6 +9,11 @@ import (
 	"github.com/sstark/gjfy/misc"
 )
 
+// AssetProvider returns a reloadable asset and the time it was last read.
+// It is a function because assets are replaced on SIGHUP while requests are
+// in flight; reading a shared pointer instead would be a data race.
+type AssetProvider func() ([]byte, time.Time)
+
 func HandleStaticFav() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "image/x-icon")
@@ -25,18 +30,16 @@ func HandleStaticLogoSmall() http.Handler {
 	})
 }
 
-func HandleStaticCss(cssp *[]byte, updatedp *time.Time) http.Handler {
+func HandleStaticCss(get AssetProvider) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		css := *cssp
-		updated := *updatedp
+		css, updated := get()
 		http.ServeContent(w, r, fileio.CssFileName, updated, bytes.NewReader(css))
 	})
 }
 
-func HandleStaticLogo(logop *[]byte, updatedp *time.Time) http.Handler {
+func HandleStaticLogo(get AssetProvider) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		logo := *logop
-		updated := *updatedp
+		logo, updated := get()
 		http.ServeContent(w, r, fileio.LogoFileName, updated, bytes.NewReader(logo))
 	})
 }

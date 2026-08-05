@@ -1,12 +1,14 @@
 package cmd
 
 import (
+	"crypto/tls"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -28,26 +30,54 @@ const (
 	TLSDefault            = false
 	notifyDefault         = false
 	allowAnonymousDefault = false
+	maxEntriesDefault     = store.DefaultMaxEntries
+
+	// Timeouts. Without them a handful of idle or slow connections can hold
+	// the server open indefinitely (slowloris).
+	readHeaderTimeout = 10 * time.Second
+	readTimeout       = 30 * time.Second
+	writeTimeout      = 30 * time.Second
+	idleTimeout       = 60 * time.Second
+	maxHeaderBytes    = 1 << 16
+
+	// Rate limits, per client address.
+	newBurst    = 10
+	newInterval = 2 * time.Second
+	getBurst    = 30
+	getInterval = time.Second
 )
 
-var (
+// assets holds everything that can be reloaded at runtime. It is swapped
+// atomically: the SIGHUP handler runs in its own goroutine while requests are
+// being served, so handlers must never read a half-updated value.
+type assets struct {
 	auth            tokendb.TokenDB
 	css             []byte
 	logo            []byte
-	updated         = time.Time{}
+	userMessageView string
+	updated         time.Time
+}
+
+var (
+	currentAssets   atomic.Pointer[assets]
 	fListen         string
 	fURLBase        string
 	fTLS            bool
 	fNotify         bool
 	fAllowAnonymous bool
+	fMaxEntries     int
 	scheme          = "http://"
-	userMessageView string
 )
 
+// Log records one line per request. Secret ids are redacted: the id is the
+// only credential protecting a secret, and access logs are routinely shipped
+// and read by people who are not the intended recipient.
 func Log(handler http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		realRemoteAddr := misc.GetRealIP(r)
-		log.Printf("%s (%s) \"%s %s %s\" \"%s\"", r.RemoteAddr, realRemoteAddr, r.Method, r.URL.Path, r.Proto, r.Header.Get("User-Agent"))
+		log.Printf("%s (%s) \"%s %s %s\" \"%s\"",
+			r.RemoteAddr, misc.GetRealIP(r), r.Method,
+			misc.RedactPath(r.URL.Path), r.Proto,
+			misc.SanitizeForMail(r.Header.Get("User-Agent"), 200))
 		handler.ServeHTTP(w, r)
 	})
 }
@@ -61,12 +91,8 @@ func getURLBase() string {
 	return fmt.Sprintf("%s%s:%s", scheme, defaultHostname, port)
 }
 
-
-// updateFiles returns values for the (global) variables for those assets
-// the the user can change/update during gjfy runtime. This is supposed
-// to be run once at the beginning and on SIGHUP.
-// The returned values need to be assigned to the corresponding (global)
-// variables.
+// updateFiles returns the values for those assets the user can change during
+// gjfy runtime. This is supposed to be run once at the beginning and on SIGHUP.
 // The last return value contains the time of the last update.
 func updateFiles() (auth tokendb.TokenDB, css, logo []byte, userMessageView string, updated time.Time) {
 	auth = tokendb.MakeTokenDB(fileio.TryReadFile(tokendb.AuthFileName))
@@ -86,6 +112,26 @@ func updateFiles() (auth tokendb.TokenDB, css, logo []byte, userMessageView stri
 	return
 }
 
+// reload reads the configuration files and publishes them atomically.
+func reload() {
+	auth, css, logo, umv, updated := updateFiles()
+	currentAssets.Store(&assets{
+		auth:            auth,
+		css:             css,
+		logo:            logo,
+		userMessageView: umv,
+		updated:         updated,
+	})
+}
+
+func loadedAssets() *assets {
+	a := currentAssets.Load()
+	if a == nil {
+		return &assets{}
+	}
+	return a
+}
+
 func init() {
 	rootCmd.AddCommand(serverCmd)
 	serverCmd.Flags().StringVarP(&fListen, "listen", "l", listenDefault, "Listen on IP:port")
@@ -93,6 +139,51 @@ func init() {
 	serverCmd.Flags().BoolVarP(&fTLS, "tls", "s", TLSDefault, "Use TLS connection")
 	serverCmd.Flags().BoolVarP(&fNotify, "notify", "n", notifyDefault, "Send email notification when one time link is used")
 	serverCmd.Flags().BoolVarP(&fAllowAnonymous, "allow-anonymous", "a", allowAnonymousDefault, "Allow secrets by anonymous users")
+	serverCmd.Flags().IntVarP(&fMaxEntries, "max-entries", "m", maxEntriesDefault, "Maximum number of secrets held in memory")
+}
+
+// buildMux wires up all routes. It is separate from the command so that tests
+// can exercise the fully assembled server.
+func buildMux(memstore *store.SecretStore, urlbase string) http.Handler {
+	getAuth := func() tokendb.TokenDB { return loadedAssets().auth }
+	getMessage := func() string { return loadedAssets().userMessageView }
+
+	newLimiter := misc.NewLimiter(newBurst, newInterval)
+	getLimiter := misc.NewLimiter(getBurst, getInterval)
+
+	mux := http.NewServeMux()
+
+	// View handlers
+	mux.Handle("/", httpio.HandleIndex(fAllowAnonymous))
+	mux.Handle(httpio.Get, misc.RateLimit(getLimiter,
+		httpio.HandleGet(memstore, urlbase, fNotify, getMessage)))
+	mux.Handle(httpio.Info, misc.RateLimit(newLimiter,
+		httpio.HandleInfo(memstore, urlbase, getAuth)))
+	if fAllowAnonymous {
+		mux.Handle(httpio.Create, misc.RateLimit(newLimiter,
+			httpio.HandleCreate(memstore, urlbase)))
+	}
+
+	// API handlers
+	mux.Handle(httpio.ApiGet, misc.RateLimit(getLimiter,
+		httpio.HandleApiGet(memstore, urlbase, fNotify)))
+	mux.Handle(httpio.ApiNew, misc.RateLimit(newLimiter,
+		httpio.HandleApiNew(memstore, urlbase, getAuth)))
+
+	// Static handlers
+	mux.Handle(httpio.Fav, httpio.HandleStaticFav())
+	mux.Handle(httpio.LogoSmall, httpio.HandleStaticLogoSmall())
+	mux.Handle(httpio.Css, httpio.HandleStaticCss(func() ([]byte, time.Time) {
+		a := loadedAssets()
+		return a.css, a.updated
+	}))
+	mux.Handle(httpio.Logo, httpio.HandleStaticLogo(func() ([]byte, time.Time) {
+		a := loadedAssets()
+		return a.logo, a.updated
+	}))
+	mux.Handle(httpio.ClientShell, httpio.HandleStaticClientShellScript(urlbase))
+
+	return misc.SecurityHeaders(Log(mux), fTLS)
 }
 
 var serverCmd = &cobra.Command{
@@ -107,47 +198,40 @@ into the server subcommand)`,
 	Run: func(cmd *cobra.Command, args []string) {
 		log.Printf("gjfy version %s\n", Version)
 
-		memstore := make(store.SecretStore)
-		memstore.NewEntry("secret", 100, 0, "test@example.org", "test")
+		memstore := store.New(fMaxEntries)
 		go memstore.Expiry(time.Minute * expiryCheck)
 
-		auth, css, logo, userMessageView, updated = updateFiles()
+		reload()
 
 		sighup := make(chan os.Signal, 1)
 		signal.Notify(sighup, syscall.SIGHUP)
 		go func() {
-			for {
-				<-sighup
+			for range sighup {
 				log.Println("reloading configuration...")
-				auth, css, logo, userMessageView, updated = updateFiles()
+				reload()
 			}
 		}()
 
-		// View handlers
-		http.Handle("/", httpio.HandleIndex(fAllowAnonymous))
-		http.Handle(httpio.Get, httpio.HandleGet(memstore, getURLBase(), fNotify, &userMessageView))
-		http.Handle(httpio.Info, httpio.HandleInfo(memstore, getURLBase()))
-		if fAllowAnonymous {
-			http.Handle(httpio.Create, httpio.HandleCreate(memstore, getURLBase()))
+		if fTLS {
+			scheme = "https://"
 		}
-
-		// API handlers
-		http.Handle(httpio.ApiGet, httpio.HandleApiGet(memstore, getURLBase(), fNotify))
-		http.Handle(httpio.ApiNew, httpio.HandleApiNew(memstore, getURLBase(), &auth))
-
-		// Static handlers
-		http.Handle(httpio.Fav, httpio.HandleStaticFav())
-		http.Handle(httpio.LogoSmall, httpio.HandleStaticLogoSmall())
-		http.Handle(httpio.Css, httpio.HandleStaticCss(&css, &updated))
-		http.Handle(httpio.Logo, httpio.HandleStaticLogo(&logo, &updated))
-		http.Handle(httpio.ClientShell, httpio.HandleStaticClientShellScript(getURLBase()))
-
 		if fNotify {
 			log.Println("email notifications enabled")
 		}
+		log.Printf("holding at most %d secrets in memory\n", fMaxEntries)
 
+		srv := &http.Server{
+			Addr:              fListen,
+			Handler:           buildMux(memstore, getURLBase()),
+			ReadHeaderTimeout: readHeaderTimeout,
+			ReadTimeout:       readTimeout,
+			WriteTimeout:      writeTimeout,
+			IdleTimeout:       idleTimeout,
+			MaxHeaderBytes:    maxHeaderBytes,
+		}
+
+		log.Printf("using '%s' as URL base\n", getURLBase())
 		if fTLS {
-			scheme = "https://"
 			cf := fileio.TryFile(crtFile)
 			if cf == "" {
 				log.Fatalf("unable to open %s\n", crtFile)
@@ -156,13 +240,12 @@ into the server subcommand)`,
 			if kf == "" {
 				log.Fatalf("unable to open %s\n", keyFile)
 			}
-			log.Printf("using '%s' as URL base\n", getURLBase())
+			srv.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12}
 			log.Println("listening on", fListen, "with TLS")
-			log.Fatal(http.ListenAndServeTLS(fListen, cf, kf, Log(http.DefaultServeMux)))
+			log.Fatal(srv.ListenAndServeTLS(cf, kf))
 		} else {
-			log.Printf("using '%s' as URL base\n", getURLBase())
 			log.Println("listening on", fListen, "without TLS")
-			log.Fatal(http.ListenAndServe(fListen, Log(http.DefaultServeMux)))
+			log.Fatal(srv.ListenAndServe())
 		}
 	},
 }

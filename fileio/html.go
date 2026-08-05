@@ -23,6 +23,6 @@ const (
 		you memorise the secret or write it down in an appropriate way.
 		`
 	UserMessageViewFilename = "userMessageView.txt"
-	CssFileName  = "custom.css"
-	LogoFileName = "logo.png"
+	CssFileName             = "custom.css"
+	LogoFileName            = "logo.png"
 )

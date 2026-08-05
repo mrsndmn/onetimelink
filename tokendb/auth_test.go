@@ -8,127 +8,116 @@ import (
 	"github.com/sstark/gjfy/store"
 )
 
-type tdbTestPair struct {
-	in  []byte
-	out bool
-}
+const (
+	tokenA = "aaaaaaaaaaaaaaaaaaaa"
+	tokenB = "bbbbbbbbbbbbbbbbbbbb"
+)
 
-var tdbTestPairs = []tdbTestPair{
-	{
-		in:  []byte("bla"),
-		out: false,
-	},
-	{
-		in: []byte(`[{
-				"token": "test",
-				"email": "test@example.org"
-			},
-			{
-				"token": "test2",
-				"email": "other@example.org"
-			}]`),
-		out: true,
-	},
-}
+var goodDB = []byte(`[
+	{"token": "` + tokenA + `", "email": "test@example.org"},
+	{"token": "` + tokenB + `", "email": "other@example.org"}
+]`)
 
-func TestAuth_makeTokenDB(t *testing.T) {
+func TestMakeTokenDB(t *testing.T) {
 	log.SetOutput(io.Discard)
-	for _, pair := range tdbTestPairs {
-		tdb := MakeTokenDB(pair.in)
-		if (tdb != nil) != pair.out {
-			t.Errorf("%v should be %v", tdb, pair.out)
-		}
-	}
-}
+	defer log.SetOutput(io.Discard)
 
-type tdbFindTokenTest struct {
-	db  []byte
-	in  string
-	out string
-}
-
-func TestAuthFindToken(t *testing.T) {
-	tdbFindTokenTests := map[string]tdbFindTokenTest{
-		"look for non-existing entry": {
-			db:  []byte("bla"),
-			in:  "foo@example.com",
-			out: "",
-		},
-		"look for existing entry": {
-			db: []byte(`[{
-					"token": "test",
-					"email": "test@example.org"
-				},
-				{
-					"token": "test2",
-					"email": "other@example.org"
-				}]`),
-			in:  "test2",
-			out: "other@example.org",
-		},
+	tests := map[string]struct {
+		in    []byte
+		valid bool
+	}{
+		"garbage":       {[]byte("bla"), false},
+		"well formed":   {goodDB, true},
+		"missing token": {[]byte(`[{"email": "a@example.org"}]`), false},
+		"missing email": {[]byte(`[{"token": "` + tokenA + `"}]`), false},
+		// A token this short is guessable; the whole database is refused.
+		"short token": {[]byte(`[{"token": "abc", "email": "a@example.org"}]`), false},
+		// An address starting with "-" would reach mail(1) as a flag.
+		"flag-like email": {[]byte(`[{"token": "` + tokenA + `", "email": "-Xfoo@example.org"}]`), false},
+		"nonsense email":  {[]byte(`[{"token": "` + tokenA + `", "email": "not-an-address"}]`), false},
 	}
-	for label, test := range tdbFindTokenTests {
+	for label, tc := range tests {
 		t.Run(label, func(t *testing.T) {
-			tdb := MakeTokenDB(test.db)
-			out := tdb.findToken(test.in)
-			if out != test.out {
-				t.Errorf("unexpected output: expected %v, got %v", test.out, out)
+			tdb := MakeTokenDB(tc.in)
+			if (tdb != nil) != tc.valid {
+				t.Errorf("MakeTokenDB returned %v, wanted valid=%v", tdb, tc.valid)
 			}
 		})
 	}
 }
 
-type tdbIsAuthorizedTest struct {
-	db  []byte
-	in  string
-	found bool
-	email string
-	out bool
+func TestFindToken(t *testing.T) {
+	log.SetOutput(io.Discard)
+	tdb := MakeTokenDB(goodDB)
+	if tdb == nil {
+		t.Fatal("test database did not load")
+	}
+	if got := tdb.findToken(tokenB); got != "other@example.org" {
+		t.Errorf("got %v, wanted other@example.org", got)
+	}
+	if got := tdb.findToken("nosuchtokennosuchtoken"); got != "" {
+		t.Errorf("unknown token resolved to %v", got)
+	}
+	if got := tdb.findToken(""); got != "" {
+		t.Errorf("empty token resolved to %v", got)
+	}
+	// A prefix of a real token must not be accepted.
+	if got := tdb.findToken(tokenA[:len(tokenA)-1]); got != "" {
+		t.Errorf("prefix of a valid token was accepted: %v", got)
+	}
 }
 
 func TestIsAuthorized(t *testing.T) {
-	tdbIsAuthorizedTests := map[string]tdbIsAuthorizedTest{
-		"look for non-existing entry": {
-			db:  []byte("bla"),
-			in:  "foobar",
-			found: false,
-			email: "",
-			out: false,
-		},
-		"look for existing entry": {
-			db: []byte(`[{
-					"token": "test",
-					"email": "test@example.org"
-				},
-				{
-					"token": "test2",
-					"email": "other@example.org"
-				}]`),
-			in:  "id",
-			found: true,
-			email: "other@example.org",
-			out: true,
-		},
+	log.SetOutput(io.Discard)
+	tdb := MakeTokenDB(goodDB)
+	if tdb == nil {
+		t.Fatal("test database did not load")
 	}
-	store := make(store.SecretStore)
-	store.NewEntry("secret", 1, 1, "test2", "id")
-	for label, test := range tdbIsAuthorizedTests {
-		t.Run(label, func(t *testing.T) {
-			entry, ok := store.GetEntry(test.in)
-			if ok != test.found {
-				t.Errorf("when finding store entry: expected %v, got %v", test.found, ok)
-			}
-			tdb := MakeTokenDB(test.db)
-			out := tdb.IsAuthorized(&entry)
-			if out != test.out {
-				t.Errorf("unexpected output: expected %v, got %v", test.out, out)
-			}
-			// A side-effect of isAuthorized is to change the token into the email address, check for that
-			if ok {
-				if entry.AuthToken != test.email {
-					t.Errorf("entry AuthToken field was not changed to expected value: expected %v, got %v", test.email, entry.AuthToken)
-				}
-			}
-		})
+
+	t.Run("valid token is swapped for the email", func(t *testing.T) {
+		entry := store.StoreEntry{Secret: "s", AuthToken: tokenB}
+		if !tdb.IsAuthorized(&entry) {
+			t.Fatal("valid token was rejected")
+		}
+		// The token itself must not end up in the secret store.
+		if entry.AuthToken != "other@example.org" {
+			t.Errorf("AuthToken is %v, wanted the email address", entry.AuthToken)
+		}
+	})
+
+	t.Run("unknown token is rejected", func(t *testing.T) {
+		entry := store.StoreEntry{Secret: "s", AuthToken: "wrongtokenwrongtoken"}
+		if tdb.IsAuthorized(&entry) {
+			t.Error("unknown token was accepted")
+		}
+	})
+
+	t.Run("empty token is rejected", func(t *testing.T) {
+		entry := store.StoreEntry{Secret: "s"}
+		if tdb.IsAuthorized(&entry) {
+			t.Error("empty token was accepted")
+		}
+	})
+
+	t.Run("nil database rejects everything", func(t *testing.T) {
+		var empty TokenDB
+		entry := store.StoreEntry{Secret: "s", AuthToken: tokenA}
+		if empty.IsAuthorized(&entry) {
+			t.Error("a database that failed to load accepted a token")
+		}
+	})
+}
+
+func TestKnows(t *testing.T) {
+	log.SetOutput(io.Discard)
+	tdb := MakeTokenDB(goodDB)
+	if !tdb.Knows(tokenA) {
+		t.Error("known token not recognised")
+	}
+	if tdb.Knows("someothertokenentirely") {
+		t.Error("unknown token recognised")
+	}
+	if tdb.Knows("") {
+		t.Error("empty token recognised")
 	}
 }

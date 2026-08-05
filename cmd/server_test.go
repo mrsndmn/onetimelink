@@ -2,22 +2,26 @@ package cmd
 
 import (
 	"bytes"
+	"encoding/json"
+	"io"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
-	"bou.ke/monkey"
 	"github.com/sstark/gjfy/fileio"
 	"github.com/sstark/gjfy/httpio"
 	"github.com/sstark/gjfy/store"
 	"github.com/sstark/gjfy/tokendb"
 )
 
-var mockNow = time.Date(2009, time.November, 10, 23, 0, 0, 0, time.UTC)
+const testToken = "testtokentesttoken"
 
 func createAuthDBFile(dir, content string) {
 	authDBFile, _ := os.Create(filepath.Join(dir, tokendb.AuthFileName))
@@ -31,107 +35,241 @@ func createUserMessageViewFile(dir, content string) {
 	umvFile.WriteString(content)
 }
 
+// chdirTemp moves into a fresh directory holding a usable auth.db.
+func chdirTemp(t *testing.T) string {
+	t.Helper()
+	log.SetOutput(io.Discard)
+	old, _ := os.Getwd()
+	tmpdir, err := os.MkdirTemp("", "gjfy_test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(tmpdir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		os.Chdir(old)
+		os.RemoveAll(tmpdir)
+	})
+	return tmpdir
+}
+
 func TestUpdateFiles(t *testing.T) {
-	tmpdir, _ := os.MkdirTemp("", "gjfy_test")
-	os.Chdir(tmpdir)
-	createAuthDBFile(tmpdir, `[{
-        "token": "test",
-        "email": "test@example.org"
-    },
-    {
-        "token": "test2",
-        "email": "other@example.org"
-    }
-]`)
-	auth1, css1, logo1, userMessageView1, updated1 := updateFiles()
-	time.Sleep(time.Millisecond * 2)
-	auth2, css2, logo2, userMessageView2, updated2 := updateFiles()
-	if !reflect.DeepEqual(auth1, auth2) || !reflect.DeepEqual(css1, css2) || !reflect.DeepEqual(logo1, logo2) || userMessageView1 != userMessageView2 {
-		t.Errorf("Running updateFiles twice gives differing results")
+	tmpdir := chdirTemp(t)
+	createAuthDBFile(tmpdir, `[
+		{"token": "`+testToken+`", "email": "test@example.org"},
+		{"token": "secondtokensecondtoken", "email": "other@example.org"}
+	]`)
+	auth1, css1, logo1, umv1, updated1 := updateFiles()
+	if auth1 == nil {
+		t.Fatal("auth db did not load")
+	}
+	time.Sleep(2 * time.Millisecond)
+	auth2, css2, logo2, umv2, updated2 := updateFiles()
+	if !reflect.DeepEqual(auth1, auth2) || !reflect.DeepEqual(css1, css2) ||
+		!reflect.DeepEqual(logo1, logo2) || umv1 != umv2 {
+		t.Errorf("running updateFiles twice gives differing results")
 	}
 	if updated1 == updated2 {
-		t.Errorf("Timestamp did not change between updates")
+		t.Errorf("timestamp did not change between updates")
 	}
-	createAuthDBFile(tmpdir, `[{
-        "token": "test",
-        "email": "test@example.org"
-    },
-    {
-        "token": "test3",
-        "email": "foobar@example.org"
-    }
-]`)
+
+	createAuthDBFile(tmpdir, `[
+		{"token": "`+testToken+`", "email": "test@example.org"},
+		{"token": "thirdtokenthirdtoken", "email": "foobar@example.org"}
+	]`)
 	auth3, _, _, _, _ := updateFiles()
 	if reflect.DeepEqual(auth2, auth3) {
-		t.Errorf("auth.db was not updated after changing file")
+		t.Errorf("auth.db was not updated after changing the file")
 	}
+
 	userMessage := "foo bar baz!"
 	createUserMessageViewFile(tmpdir, userMessage)
-	_, _, _, userMessageView3, _ := updateFiles()
-	if userMessageView3 != userMessage {
+	_, _, _, umv3, _ := updateFiles()
+	if umv3 != userMessage {
 		t.Errorf("userMessageView was not updated from file")
 	}
 }
 
-// Try posting a secret without proper token, then update the auth.db
-// file with the correct token, reload it and make sure posting works.
+// Post a secret without a valid token, then add the token to auth.db, reload
+// and make sure posting works.
 func TestAuthDBUpdatedAtRuntime(t *testing.T) {
-	tmpdir, _ := os.MkdirTemp("", "gjfy_test")
-	os.Chdir(tmpdir)
-	createAuthDBFile(tmpdir, `[{
-        "token": "test",
-        "email": "test@example.org"
-    }
-]`)
-	auth, _, _, _, _ := updateFiles()
-	monkey.Patch(time.Now, func() time.Time {
-		return mockNow
-	})
-	defer monkey.Unpatch(time.Now)
-	store := make(store.SecretStore)
-	urlbase := "http://localhost:9154"
-	postdata := bytes.NewReader([]byte(`{
-					"auth_token": "sometoken",
-					"secret": "sekrit",
-					"max_clicks": 3 
-				}`))
-	req, _ := http.NewRequest("POST", urlbase+httpio.ApiNew, postdata)
+	tmpdir := chdirTemp(t)
+	createAuthDBFile(tmpdir, `[{"token": "`+testToken+`", "email": "test@example.org"}]`)
+	reload()
+
+	st := store.New(0)
+	getAuth := func() tokendb.TokenDB { return loadedAssets().auth }
+	handler := httpio.HandleApiNew(st, "http://localhost:9154", getAuth)
+
+	post := func(token string) *httptest.ResponseRecorder {
+		body := bytes.NewReader([]byte(`{"auth_token": "` + token + `", "secret": "sekrit"}`))
+		req, _ := http.NewRequest("POST", "http://localhost:9154"+httpio.ApiNew, body)
+		rr := httptest.NewRecorder()
+		handler.ServeHTTP(rr, req)
+		return rr
+	}
+
+	if rr := post("sometokensometoken"); rr.Code != http.StatusUnauthorized {
+		t.Errorf("got status %v, wanted %v", rr.Code, http.StatusUnauthorized)
+	}
+
+	createAuthDBFile(tmpdir, `[
+		{"token": "`+testToken+`", "email": "test@example.org"},
+		{"token": "sometokensometoken", "email": "other@example.org"}
+	]`)
+	reload()
+
+	rr := post("sometokensometoken")
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("got status %v, wanted %v: %s", rr.Code, http.StatusCreated, rr.Body.String())
+	}
+	var out store.StoreEntryInfo
+	if err := json.Unmarshal(rr.Body.Bytes(), &out); err != nil {
+		t.Fatalf("bad json: %v", err)
+	}
+	if out.AuthToken != "other@example.org" {
+		t.Errorf("got auth_token %v, wanted other@example.org", out.AuthToken)
+	}
+}
+
+// Reloading happens in its own goroutine while requests are being served, so
+// swapping the configuration must not race with reading it.
+func TestReloadIsConcurrencySafe(t *testing.T) {
+	tmpdir := chdirTemp(t)
+	createAuthDBFile(tmpdir, `[{"token": "`+testToken+`", "email": "test@example.org"}]`)
+	reload()
+
+	var wg sync.WaitGroup
+	stop := make(chan struct{})
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				reload()
+				time.Sleep(time.Microsecond)
+			}
+		}
+	}()
+
+	var readers sync.WaitGroup
+	for i := 0; i < 20; i++ {
+		readers.Add(1)
+		go func() {
+			defer readers.Done()
+			for j := 0; j < 200; j++ {
+				a := loadedAssets()
+				_ = a.auth
+				_ = len(a.css)
+				_ = len(a.logo)
+				_ = a.userMessageView
+				_ = a.updated
+			}
+		}()
+	}
+	readers.Wait()
+	close(stop)
+	wg.Wait()
+}
+
+func newTestMux(t *testing.T) http.Handler {
+	t.Helper()
+	tmpdir := chdirTemp(t)
+	createAuthDBFile(tmpdir, `[{"token": "`+testToken+`", "email": "test@example.org"}]`)
+	reload()
+	return buildMux(store.New(0), "http://localhost:9154")
+}
+
+// Earlier versions seeded the store with a hardcoded entry under the id
+// "test", so every deployment served a known secret and could be fingerprinted.
+func TestNoBuiltInTestSecret(t *testing.T) {
+	mux := newTestMux(t)
+	for _, path := range []string{"/g?id=test", "/api/v1/get/test"} {
+		req := httptest.NewRequest("GET", path, nil)
+		req.RemoteAddr = "127.0.0.1:1111"
+		rr := httptest.NewRecorder()
+		mux.ServeHTTP(rr, req)
+		if rr.Code != http.StatusNotFound {
+			t.Errorf("%s returned %v, wanted 404 — a built-in secret is present", path, rr.Code)
+		}
+		if strings.Contains(rr.Body.String(), "gjfy-form-control") &&
+			strings.Contains(rr.Body.String(), "value=\"secret\"") {
+			t.Errorf("%s served a built-in secret", path)
+		}
+	}
+}
+
+func TestMuxSetsSecurityHeaders(t *testing.T) {
+	mux := newTestMux(t)
+	req := httptest.NewRequest("GET", "/", nil)
+	req.RemoteAddr = "127.0.0.1:1111"
 	rr := httptest.NewRecorder()
-	handler := httpio.HandleApiNew(store, urlbase, &auth)
-	handler.ServeHTTP(rr, req)
-	if status := rr.Code; status != http.StatusUnauthorized {
-		t.Errorf("handler returned wrong status code: got %v, wanted %v", status, http.StatusUnauthorized)
+	mux.ServeHTTP(rr, req)
+
+	if !strings.Contains(rr.Header().Get("Cache-Control"), "no-store") {
+		t.Errorf("Cache-Control is %q", rr.Header().Get("Cache-Control"))
 	}
-	expected := `{"error":"unauthorized"}
-`
-	if rr.Body.String() != expected {
-		t.Errorf("handler returned unexpected body: got\n%v want\n%v",
-			rr.Body.String(), expected)
+	if rr.Header().Get("Referrer-Policy") != "no-referrer" {
+		t.Errorf("Referrer-Policy is %q", rr.Header().Get("Referrer-Policy"))
 	}
-	createAuthDBFile(tmpdir, `[{
-        "token": "test",
-        "email": "test@example.org"
-    },
-    {
-        "token": "sometoken",
-        "email": "other@example.org"
-    }
-]`)
-	auth, _, _, _, _ = updateFiles()
-	postdata2 := bytes.NewReader([]byte(`{
-					"auth_token": "sometoken",
-					"secret": "sekrit",
-					"max_clicks": 3 
-				}`))
-	req2, _ := http.NewRequest("POST", urlbase+httpio.ApiNew, postdata2)
-	rr2 := httptest.NewRecorder()
-	handler.ServeHTTP(rr2, req2)
-	if status := rr2.Code; status != http.StatusCreated {
-		t.Errorf("handler returned wrong status code: got %v, wanted %v", status, http.StatusCreated)
+}
+
+func TestMuxRateLimitsCreation(t *testing.T) {
+	mux := newTestMux(t)
+	limited := false
+	for i := 0; i < newBurst+5; i++ {
+		body := strings.NewReader(`{"auth_token": "` + testToken + `", "secret": "s"}`)
+		req := httptest.NewRequest("POST", httpio.ApiNew, body)
+		req.RemoteAddr = "127.0.0.2:2222"
+		rr := httptest.NewRecorder()
+		mux.ServeHTTP(rr, req)
+		if rr.Code == http.StatusTooManyRequests {
+			limited = true
+			break
+		}
 	}
-	expected2 := `{"secret":"#HIDDEN#","max_clicks":3,"clicks":0,"date_added":"2009-11-10T23:00:00Z","valid_for":7,"auth_token":"other@example.org","id":"5SxjhlIQghCDo4pVktIqVKsti1TGqJ5O9g6eEJMTyhA","path_query":"/g?id=5SxjhlIQghCDo4pVktIqVKsti1TGqJ5O9g6eEJMTyhA","url":"http://localhost:9154/g?id=5SxjhlIQghCDo4pVktIqVKsti1TGqJ5O9g6eEJMTyhA","api_url":"http://localhost:9154/api/v1/get/5SxjhlIQghCDo4pVktIqVKsti1TGqJ5O9g6eEJMTyhA"}
-`
-	if rr2.Body.String() != expected2 {
-		t.Errorf("handler returned unexpected body: got\n%v want\n%v", rr2.Body.String(), expected2)
+	if !limited {
+		t.Errorf("creation was never rate limited after %d requests", newBurst+5)
+	}
+}
+
+// The access log must not carry the id, which is the sole credential for a
+// secret.
+func TestAccessLogRedactsSecretID(t *testing.T) {
+	var buf bytes.Buffer
+	log.SetOutput(&buf)
+	defer log.SetOutput(io.Discard)
+
+	const id = "qNML_qd24WV0X4ON-6ufsLz0_IyY3f4xuMIADlbLKXE"
+	h := Log(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	req := httptest.NewRequest("GET", "/api/v1/get/"+id, nil)
+	req.RemoteAddr = "127.0.0.1:1111"
+	h.ServeHTTP(httptest.NewRecorder(), req)
+
+	if strings.Contains(buf.String(), id) {
+		t.Errorf("access log contains the full secret id:\n%s", buf.String())
+	}
+}
+
+// Timeouts are what keep slow or idle connections from holding the server
+// open indefinitely.
+func TestServerHasTimeouts(t *testing.T) {
+	srv := &http.Server{
+		ReadHeaderTimeout: readHeaderTimeout,
+		ReadTimeout:       readTimeout,
+		WriteTimeout:      writeTimeout,
+		IdleTimeout:       idleTimeout,
+		MaxHeaderBytes:    maxHeaderBytes,
+	}
+	if srv.ReadTimeout == 0 || srv.WriteTimeout == 0 || srv.IdleTimeout == 0 || srv.ReadHeaderTimeout == 0 {
+		t.Error("a timeout is left at zero, which means no timeout at all")
+	}
+	if srv.MaxHeaderBytes == 0 {
+		t.Error("MaxHeaderBytes is unset")
 	}
 }

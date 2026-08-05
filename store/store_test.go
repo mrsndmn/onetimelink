@@ -2,127 +2,206 @@ package store
 
 import (
 	"net/http/httptest"
-	"reflect"
+	"strings"
 	"testing"
 	"time"
-
-	"bou.ke/monkey"
 )
 
-var mockNow = time.Date(2009, time.November, 10, 23, 0, 0, 0, time.UTC)
-
-func TestHashStruct(t *testing.T) {
-	var in = StoreEntry{"secret1", 5, 0, mockNow, 3, "authtoken"}
-	var wanted = "0Y3Mkcz36xM0hwrSnVw3PMebEMfa27Oi1mmuaELD4-Q"
-	got := hashStruct(in)
-	if got != wanted {
-		t.Errorf("got %v, wanted %v", got, wanted)
+func mustAdd(t *testing.T, st *SecretStore, secret string, maxclicks, validfor int, at, id string) string {
+	t.Helper()
+	got, err := st.NewEntry(secret, maxclicks, validfor, at, id)
+	if err != nil {
+		t.Fatalf("NewEntry(%q) returned error: %v", secret, err)
 	}
+	return got
 }
 
-type StoreEntryInput struct {
-	secret    string
-	maxClicks int
-	validFor  int
-	authToken string
-	id        string
-}
-
-type StoreEntryOutput struct {
-	StoreEntry
-	id string
-}
-
-type StoreEntryTestPair struct {
-	in  StoreEntryInput
-	out StoreEntryOutput
-}
-
-var StoreEntryTestPairs = []StoreEntryTestPair{
-	{
-		StoreEntryInput{"secret1", 5, 3, "authtoken", "id1"},
-		StoreEntryOutput{StoreEntry{"secret1", 5, 0, mockNow, 3, "authtoken"}, "id1"},
-	},
-	{
-		StoreEntryInput{"secret2", 2, 3, "authtoken", ""},
-		StoreEntryOutput{StoreEntry{"secret2", 2, 0, mockNow, 3, "authtoken"}, "iLbLBYFzULLUfB84p8VHldWd4VnHg0mZq_5S45p0lEk"},
-	},
-}
-
-func TestStore_NewEntry(t *testing.T) {
-	monkey.Patch(time.Now, func() time.Time {
-		return mockNow
-	})
-	defer monkey.Unpatch(time.Now)
-	store := make(SecretStore)
-	for _, p := range StoreEntryTestPairs {
-		outId := store.NewEntry(p.in.secret, p.in.maxClicks, p.in.validFor, p.in.authToken, p.in.id)
-		if outId != p.out.id {
-			t.Errorf("got %v, wanted %v", outId, p.out.id)
-		}
-		outEntry, ok := store.GetEntry(outId)
-		if !ok {
-			t.Errorf("new entry not found under %v", outId)
-		}
-		if !reflect.DeepEqual(p.out.StoreEntry, outEntry) {
-			t.Errorf("got %v, wanted %v", p.out.StoreEntry, outEntry)
-		}
+func TestNewEntryStoresValues(t *testing.T) {
+	st := New(0)
+	id := mustAdd(t, st, "secret1", 5, 3, "auth@example.org", "id1")
+	if id != "id1" {
+		t.Errorf("explicit id not honoured: got %v, wanted id1", id)
 	}
-}
-
-func TestStore_GetEntryInfo(t *testing.T) {
-	store := make(SecretStore)
-	store.NewEntry("secret", 1, 1, "auth", "testid")
-	out, ok := store.GetEntryInfoHidden("testid", "http://localhost:", "/g", "/api/v1/get/")
+	e, ok := st.GetEntry("id1")
 	if !ok {
-		t.Errorf("new entry not found under %v", "testid")
+		t.Fatal("entry not found after adding")
 	}
-	wanted := "http://localhost:/api/v1/get/testid"
-	if out.ApiUrl != wanted {
-		t.Errorf("got %v, wanted %v", out.ApiUrl, wanted)
+	if e.Secret != "secret1" || e.MaxClicks != 5 || e.ValidFor != 3 || e.AuthToken != "auth@example.org" {
+		t.Errorf("entry stored with wrong values: %+v", e)
 	}
-	wanted = "http://localhost:/g?id=testid"
-	if out.Url != wanted {
-		t.Errorf("got %v, wanted %v", out.Url, wanted)
+	if e.Clicks != 0 {
+		t.Errorf("fresh entry should have 0 clicks, got %d", e.Clicks)
 	}
-	wanted = hiddenString
-	if out.Secret != wanted {
-		t.Errorf("got %v, wanted %v", out.Secret, wanted)
+	if e.DateAdded.IsZero() {
+		t.Error("DateAdded was not set")
 	}
 }
 
-func TestStore_Click(t *testing.T) {
-	clicks := 2
-	store := make(SecretStore)
-	store.NewEntry("secret", clicks, 1, "auth", "testid")
-	_, ok := store.GetEntry("testid")
-	if !ok {
-		t.Errorf("new entry not found under %v", "testid")
+func TestNewEntryDefaults(t *testing.T) {
+	st := New(0)
+	id := mustAdd(t, st, "secret", 0, 0, "auth@example.org", "")
+	e, _ := st.GetEntry(id)
+	if e.MaxClicks != defaultMaxClicks {
+		t.Errorf("got max_clicks %d, wanted default %d", e.MaxClicks, defaultMaxClicks)
 	}
+	if e.ValidFor != defaultValidity {
+		t.Errorf("got valid_for %d, wanted default %d", e.ValidFor, defaultValidity)
+	}
+}
+
+// The id must not be derived from the secret: doing so lets anyone who can
+// guess a secret confirm the guess by recomputing the id.
+func TestIDsAreRandomNotDerivedFromSecret(t *testing.T) {
+	st := New(0)
+	seen := make(map[string]bool)
+	const n = 500
+	for i := 0; i < n; i++ {
+		// Same secret, same everything: the ids must still all differ.
+		id := mustAdd(t, st, "identical-secret", 1, 1, "auth@example.org", "")
+		if seen[id] {
+			t.Fatalf("duplicate id generated: %v", id)
+		}
+		if len(id) < 40 {
+			t.Fatalf("id %q is suspiciously short (%d chars)", id, len(id))
+		}
+		if strings.Contains(id, "identical-secret") {
+			t.Fatalf("id leaks the secret: %v", id)
+		}
+		seen[id] = true
+	}
+	if len(seen) != n {
+		t.Errorf("got %d distinct ids out of %d", len(seen), n)
+	}
+}
+
+func TestAddEntryRejectsBadInput(t *testing.T) {
+	st := New(0)
+	if _, err := st.NewEntry("", 1, 1, "auth@example.org", ""); err != ErrEmptySecret {
+		t.Errorf("empty secret: got %v, wanted %v", err, ErrEmptySecret)
+	}
+	long := strings.Repeat("x", maxSecretLen+1)
+	if _, err := st.NewEntry(long, 1, 1, "auth@example.org", ""); err != ErrSecretTooLong {
+		t.Errorf("oversized secret: got %v, wanted %v", err, ErrSecretTooLong)
+	}
+}
+
+// Without a cap on the number of entries, anybody able to create secrets can
+// drive the process out of memory.
+func TestStoreCapacity(t *testing.T) {
+	st := New(3)
+	for i := 0; i < 3; i++ {
+		mustAdd(t, st, "secret", 1, 1, "auth@example.org", "")
+	}
+	if _, err := st.NewEntry("one too many", 1, 1, "auth@example.org", ""); err != ErrStoreFull {
+		t.Errorf("got %v, wanted %v", err, ErrStoreFull)
+	}
+	if st.Len() != 3 {
+		t.Errorf("store grew past its cap: %d", st.Len())
+	}
+}
+
+func TestGetEntryInfo(t *testing.T) {
+	st := New(0)
+	mustAdd(t, st, "secret", 1, 1, "auth@example.org", "testid")
+	out, ok := st.GetEntryInfoHidden("testid", "http://localhost:9154", "/g", "/api/v1/get/")
+	if !ok {
+		t.Fatal("entry not found")
+	}
+	if want := "http://localhost:9154/api/v1/get/testid"; out.ApiUrl != want {
+		t.Errorf("got %v, wanted %v", out.ApiUrl, want)
+	}
+	if want := "http://localhost:9154/g?id=testid"; out.Url != want {
+		t.Errorf("got %v, wanted %v", out.Url, want)
+	}
+	if out.Secret != hiddenString {
+		t.Errorf("secret was not hidden: got %v", out.Secret)
+	}
+}
+
+// GetEntryInfo is used by the metadata view and must never consume a click.
+func TestGetEntryInfoDoesNotConsumeClick(t *testing.T) {
+	st := New(0)
+	mustAdd(t, st, "secret", 1, 1, "auth@example.org", "testid")
+	for i := 0; i < 5; i++ {
+		if _, ok := st.GetEntryInfoHidden("testid", "b", "/g", "/a/"); !ok {
+			t.Fatalf("entry disappeared after %d metadata reads", i)
+		}
+	}
+	e, ok := st.GetEntry("testid")
+	if !ok {
+		t.Fatal("entry gone")
+	}
+	if e.Clicks != 0 {
+		t.Errorf("metadata read consumed %d click(s)", e.Clicks)
+	}
+}
+
+func TestClaimCountsAndDeletes(t *testing.T) {
+	st := New(0)
+	const clicks = 2
+	mustAdd(t, st, "secret", clicks, 1, "auth@example.org", "testid")
 	req := httptest.NewRequest("GET", "/testid", nil)
-	for i := 0; i < clicks; i++ {
-		store.Click("testid", req, false)
+
+	for i := 1; i <= clicks; i++ {
+		si, ok := st.Claim("testid", "b", "/g", "/a/", req, false)
+		if !ok {
+			t.Fatalf("claim %d failed", i)
+		}
+		if si.Secret != "secret" {
+			t.Errorf("claim %d returned wrong secret: %v", i, si.Secret)
+		}
+		if si.Clicks != i {
+			t.Errorf("claim %d reported %d clicks", i, si.Clicks)
+		}
 	}
-	_, ok = store.GetEntry("testid")
-	if ok {
-		t.Errorf("new entry found under %v, but it should not be there", "testid")
+	if _, ok := st.Claim("testid", "b", "/g", "/a/", req, false); ok {
+		t.Error("entry still claimable after max_clicks was reached")
+	}
+	if _, ok := st.GetEntry("testid"); ok {
+		t.Error("entry was not deleted after its last click")
 	}
 }
 
-func TestStore_Expiry(t *testing.T) {
-	store := make(SecretStore)
-	store.NewEntry("secret", 1, 150, "auth", "testid")
-	_, ok := store.GetEntry("testid")
-	if !ok {
-		t.Errorf("new entry not found under %v", "testid")
+func TestClaimMissing(t *testing.T) {
+	st := New(0)
+	req := httptest.NewRequest("GET", "/nope", nil)
+	if _, ok := st.Claim("nope", "b", "/g", "/a/", req, false); ok {
+		t.Error("claiming a non-existing entry succeeded")
 	}
-	expFactor = func(v int) time.Duration {
-		return time.Millisecond * time.Duration(v)
+}
+
+func TestExpiry(t *testing.T) {
+	old := expFactor
+	expFactor = func(v int) time.Duration { return time.Millisecond * time.Duration(v) }
+	defer func() { expFactor = old }()
+
+	st := New(0)
+	mustAdd(t, st, "secret", 1, 20, "auth@example.org", "shortlived")
+	mustAdd(t, st, "secret", 1, 100000, "auth@example.org", "longlived")
+
+	if n := st.expireOnce(time.Now()); n != 0 {
+		t.Errorf("expired %d entries too early", n)
 	}
-	go store.Expiry(time.Millisecond * 200)
-	time.Sleep(time.Millisecond * 300)
-	_, ok = store.GetEntry("testid")
-	if ok {
-		t.Errorf("new entry found under %v, but it should be expired", "testid")
+	time.Sleep(50 * time.Millisecond)
+	if n := st.expireOnce(time.Now()); n != 1 {
+		t.Errorf("expired %d entries, wanted 1", n)
+	}
+	if _, ok := st.GetEntry("shortlived"); ok {
+		t.Error("expired entry is still there")
+	}
+	if _, ok := st.GetEntry("longlived"); !ok {
+		t.Error("unexpired entry was dropped")
+	}
+}
+
+func TestClickMessageRedactsID(t *testing.T) {
+	req := httptest.NewRequest("GET", "/api/v1/get/abcdefghijklmnop", nil)
+	req.Header.Set("User-Agent", "curl/8.0")
+	msg := clickMessage("abcdefghijklmnop", StoreEntry{MaxClicks: 1, Clicks: 1}, req)
+	if strings.Contains(msg, "abcdefghijklmnop") {
+		t.Errorf("notification mail contains the full secret id:\n%s", msg)
+	}
+	if !strings.Contains(msg, "abcdef") {
+		t.Errorf("notification mail lost the id prefix entirely:\n%s", msg)
 	}
 }

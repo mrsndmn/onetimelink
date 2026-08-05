@@ -124,7 +124,13 @@ To use TLS security add the `-tls` switch:
 
 The scheme will automatically switch to https unless you set urlbase. Before
 you can turn on tls you must create a certificate file called `gjfy.crt` and a
-key file called `gjfy.key`.
+key file called `gjfy.key`. TLS versions below 1.2 are refused.
+
+To bound how much memory the store may take, use `-max-entries` (default
+10000). Once the store is full, creating a secret returns 503 rather than
+letting the process grow without limit:
+
+    gjfy server --max-entries 500
 
 Use `gjfy server --help` for help.
 
@@ -188,6 +194,11 @@ add a section to the json list that is contained in it, like this:
         "email": "test@example.org"
     }
 
+Tokens must be at least 16 characters long and the email address must be a
+parseable address that does not begin with `-`. If any entry fails these
+checks the whole database is refused, and gjfy will reject every request until
+it is fixed — it fails closed rather than running unauthenticated.
+
 Afterwards send gjfy a hangup signal (`killall -HUP gjfy`) to make it reload
 the file. In the logfile you will be informed about success or failure.
 
@@ -199,8 +210,10 @@ example client (gjfy-post) is included. A basic request looks like this:
 
     {"auth_token":"g4uhg3iu4h5i3u4","secret":"someSecret"}
 
-By sending this to `/api/v1/new` you create a new URL which is a hash over that
-json structure. The reply from the server will tell you this link in both, a
+By sending this to `/api/v1/new` you create a new URL. Its id is 32 random
+bytes drawn from the system CSPRNG and carries no information about the secret,
+so it can neither be guessed nor used to confirm a guessed secret. The reply
+from the server will tell you this link in both, a
 user friendly version and in an API version. Invocation of that link will
 immediately lead to deletion of the secret in the server. However, there is an
 exception: you can post a `"max_clicks":n` variable along with the json and it
@@ -247,6 +260,52 @@ Which is also linked from the root page ("/").
 You can change the default URL for gjfy-post by setting the environment
 variable `GJFY_POSTURL`. If you downloaded gify-post via the URL, it will
 have the correct URL already configured in the script.
+
+Hardening
+---------
+
+This fork fixes a set of issues found while reviewing the upstream code before
+deploying it. What changed, and why:
+
+  - **The secret store is synchronised.** It used to be a bare map written to
+    by every request handler *and* by the expiry goroutine. That is a data
+    race; the Go runtime aborts the process with `fatal error: concurrent map
+    writes`, and because nothing is persisted, every outstanding secret dies
+    with it. Confirmed under `-race` on the original code.
+  - **Fetching a secret is atomic.** Looking an entry up and counting the click
+    were two separate steps, so racing requests could each read a
+    `max_clicks:1` secret before any of them deleted it.
+  - **Ids come from `crypto/rand`.** They used to be a SHA-256 over the stored
+    entry, which made the id a function of the secret.
+  - **Secret ids are never logged.** Creation logged the id in full and the
+    access log contained it for `/api/v1/get/<id>`. The id is the only
+    credential for a secret, so anyone able to read the journal could read
+    every secret. Logs now carry a short prefix only.
+  - **The metadata view `/i` requires an auth token.** It exposes the creator's
+    address and the click count without consuming a click, so it could be used
+    to probe an intercepted link silently.
+  - **Security headers are set**, notably `Cache-Control: no-store` (the page
+    showing a secret was cacheable) and `Referrer-Policy: no-referrer` (the id
+    sits in the query string).
+  - **The built-in `test` secret is gone.** Every instance used to serve a
+    known secret at `/g?id=test`.
+  - **The HTTP server has timeouts** and a header size limit; there were none,
+    which makes slowloris trivial.
+  - **The store is capped** (`-max-entries`, default 10000) and single secrets
+    are size limited, so creating secrets cannot exhaust memory.
+  - **Creation and retrieval are rate limited** per peer address.
+  - **Auth tokens are compared in constant time**, over the whole database.
+  - **Client-controlled data is sanitised** before being piped into `mail`,
+    and recipient addresses are validated so they cannot be read as flags.
+  - **Runtime config is swapped atomically.** The SIGHUP handler reassigned
+    globals that handlers were reading concurrently.
+  - The `bou.ke/monkey` test dependency was dropped; the only dependency left
+    is cobra.
+
+What has *not* changed: secrets are still held in memory only and in
+plaintext, so the server can read them, and a restart still discards every
+outstanding link. If you need the server not to be able to read secrets, use
+something that encrypts in the browser instead.
 
 FAQ
 ---

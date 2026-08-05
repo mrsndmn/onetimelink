@@ -6,8 +6,8 @@ import (
 )
 
 type GetRealIPTestCase struct {
-	request http.Request
-	headers map[string]string
+	request  http.Request
+	headers  map[string]string
 	expected string
 }
 
@@ -40,7 +40,7 @@ func TestGetRealIP(t *testing.T) {
 		"both": {
 			*makeFauxRequest("/api/v1/baz"),
 			map[string]string{
-				"X-Real-IP": "101.101.202.202",
+				"X-Real-IP":       "101.101.202.202",
 				"X-Forwarded-For": "144.144.133.133",
 			},
 			"144.144.133.133",
