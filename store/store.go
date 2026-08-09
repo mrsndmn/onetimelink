@@ -20,10 +20,16 @@ const (
 
 	// DefaultMaxEntries caps how many secrets are held at once. Without a
 	// cap, anyone allowed to create secrets can exhaust the server's memory.
-	DefaultMaxEntries = 10000
+	//
+	// The web form is open to everyone who knows the instance URL, so this is
+	// the only thing standing between a bored visitor and the server's RAM:
+	// 256 entries times MaxSecretLen is 1 MB of secrets, whatever happens.
+	DefaultMaxEntries = 256
 
-	// maxSecretLen caps the size of a single secret.
-	maxSecretLen = 65536
+	// MaxSecretLen caps the size of a single secret, in bytes. A secret is a
+	// password or a key, not a file: 4 KB is generous for that and keeps the
+	// worst case (a full store) small enough to reason about.
+	MaxSecretLen = 4096
 )
 
 var (
@@ -98,7 +104,7 @@ func (st *SecretStore) AddEntry(e StoreEntry, id string) (string, error) {
 	if e.Secret == "" {
 		return "", ErrEmptySecret
 	}
-	if len(e.Secret) > maxSecretLen {
+	if len(e.Secret) > MaxSecretLen {
 		return "", ErrSecretTooLong
 	}
 	e.DateAdded = time.Now()
@@ -159,6 +165,12 @@ func (st *SecretStore) Len() int {
 	st.mu.RLock()
 	defer st.mu.RUnlock()
 	return len(st.entries)
+}
+
+// MaxEntries returns the capacity of the store, so that a handler can tell the
+// user what the limit is instead of just refusing.
+func (st *SecretStore) MaxEntries() int {
+	return st.maxEntries
 }
 
 // makeInfo augments an entry with computed fields. It does no locking.

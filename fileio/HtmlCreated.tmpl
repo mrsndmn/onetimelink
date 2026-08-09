@@ -1,0 +1,13 @@
+{{define "created"}}
+{{template "header" "Ссылка готова"}}
+<h1>Ссылка готова</h1>
+<p class="lead">Отправьте её получателю. Сама страница ссылку не сохраняет —
+после закрытия вкладки восстановить её будет негде.</p>
+<div class="copyrow">
+	<input id="link" class="mono" readonly value="{{.Url}}">
+	<button class="btn btn-ghost" type="button" data-copy="link">Копировать</button>
+</div>
+<p class="note">Разрешено открытий: {{.MaxClicks}} · удалится через {{.ValidFor}} дн.</p>
+<p class="actions"><a href="./">Создать ещё одну</a></p>
+{{template "footer"}}
+{{end}}

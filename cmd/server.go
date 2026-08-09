@@ -52,12 +52,15 @@ const (
 type assets struct {
 	auth            tokendb.TokenDB
 	css             []byte
-	logo            []byte
 	userMessageView string
 	updated         time.Time
 }
 
 var (
+	// startTime dates the embedded script for caching purposes: it changes
+	// with every restart, which is exactly when a new binary can bring a new
+	// version of it.
+	startTime       = time.Now()
 	currentAssets   atomic.Pointer[assets]
 	fListen         string
 	fURLBase        string
@@ -92,7 +95,7 @@ func getURLBase() string {
 // updateFiles returns the values for those assets the user can change during
 // gjfy runtime. This is supposed to be run once at the beginning and on SIGHUP.
 // The last return value contains the time of the last update.
-func updateFiles() (auth tokendb.TokenDB, css, logo []byte, userMessageView string, updated time.Time) {
+func updateFiles() (auth tokendb.TokenDB, css []byte, userMessageView string, updated time.Time) {
 	auth = tokendb.MakeTokenDB(fileio.TryReadFile(tokendb.AuthFileName))
 	if auth == nil {
 		log.Println("auth db could not be loaded, please fix and reload")
@@ -101,10 +104,6 @@ func updateFiles() (auth tokendb.TokenDB, css, logo []byte, userMessageView stri
 		// default to embedded css if file not found
 		return fileio.CustomCss
 	})
-	logo = fileio.FileOrFunc(fileio.LogoFileName, func(fn string) []byte {
-		// default to embedded logo if file not found
-		return fileio.GjfyLogo
-	})
 	userMessageView = fileio.FileOrConst(fileio.UserMessageViewFilename, fileio.UserMessageViewDefaultText)
 	updated = time.Now()
 	return
@@ -112,11 +111,10 @@ func updateFiles() (auth tokendb.TokenDB, css, logo []byte, userMessageView stri
 
 // reload reads the configuration files and publishes them atomically.
 func reload() {
-	auth, css, logo, umv, updated := updateFiles()
+	auth, css, umv, updated := updateFiles()
 	currentAssets.Store(&assets{
 		auth:            auth,
 		css:             css,
-		logo:            logo,
 		userMessageView: umv,
 		updated:         updated,
 	})
@@ -180,15 +178,11 @@ func buildMux(memstore *store.SecretStore, urlbase string) http.Handler {
 
 	// Static handlers
 	mux.Handle(httpio.Fav, httpio.HandleStaticFav())
-	mux.Handle(httpio.LogoSmall, httpio.HandleStaticLogoSmall())
 	mux.Handle(httpio.Css, httpio.HandleStaticCss(func() ([]byte, time.Time) {
 		a := loadedAssets()
 		return a.css, a.updated
 	}))
-	mux.Handle(httpio.Logo, httpio.HandleStaticLogo(func() ([]byte, time.Time) {
-		a := loadedAssets()
-		return a.logo, a.updated
-	}))
+	mux.Handle(httpio.Js, httpio.HandleStaticJs(startTime))
 	mux.Handle(httpio.ClientShell, httpio.HandleStaticClientShellScript(urlbase))
 
 	return misc.SecurityHeaders(Log(mux), fTLS)

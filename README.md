@@ -65,10 +65,11 @@ Features
   - No web server or application server needed
   - No database needed
   - No persistence
-  - No javascript
+  - One small script, for the copy button (the pages work without it)
   - Simple json API (demo client included)
-  - Simple html user interface
-  - The CSS styling, logo and user message can be customised
+  - Simple html user interface, in Russian, with a web form for creating
+    secrets
+  - The CSS styling and the user message can be customised
   - Simple token based authentication
   - No subprocesses, no outbound connections
 
@@ -126,11 +127,19 @@ The scheme will automatically switch to https unless you set urlbase. Before
 you can turn on tls you must create a certificate file called `gjfy.crt` and a
 key file called `gjfy.key`. TLS versions below 1.2 are refused.
 
-To bound how much memory the store may take, use `-max-entries` (default
-10000). Once the store is full, creating a secret returns 503 rather than
-letting the process grow without limit:
+To bound how much memory the store may take, use `-max-entries` (default 256).
+Once the store is full, creating a secret returns 503 rather than letting the
+process grow without limit:
 
     gjfy server --max-entries 500
+
+A single secret is capped at 4 KB. Together the two caps bound the stored
+secrets at one megabyte, whatever a caller does.
+
+To let visitors create secrets from the web form, without an auth token, add
+`--allow-anonymous`. Only do that where reaching the service is itself a
+credential (a private network, or an unguessable path prefix in front of it):
+the form is otherwise open to anyone who can reach the port.
 
 Use `gjfy server --help` for help.
 
@@ -152,15 +161,13 @@ can only be created with a valid auth token in the POST request.
 If you are using TLS mode you need to put in place either `/etc/gjfy/gjfy.crt`
 or `$PWD/gjfy.crt`. Same applies to the key file `gjfy.key`.
 
-The logo.png can be replaced by a custom logo if needed. (It must be png)
-
 You may create a file `userMessageView.txt` that will contain the message the
 user sees when clicking on the link. It will replace the default message. HTML
 can not be used.
 
 `$PWD/<file>` will take precedence over `/etc/gjfy/<file>` for above options.
 
-To trigger reloading of auth.db, logo.png, custom.css or userMessageView.txt
+To trigger reloading of auth.db, custom.css or userMessageView.txt
 you can send SIGHUP to the gjfy process. The TLS certificate or key won't be
 reloaded this way.
 
@@ -199,8 +206,10 @@ the file. In the logfile you will be informed about success or failure.
 Usage
 -----
 
-Currently the only way to create new secrets is by using the json API. An
-example client (gjfy-post) is included. A basic request looks like this:
+Secrets are created either from the web form on the root page (with
+`--allow-anonymous`, no token, up to 10 clicks and 30 days) or through the json
+API. An example API client (gjfy-post) is included. A basic request looks like
+this:
 
     {"auth_token":"g4uhg3iu4h5i3u4","secret":"someSecret"}
 
@@ -251,8 +260,6 @@ The client can be downloaded from the running server by using the URL
 
     /gjfy-post
 
-Which is also linked from the root page ("/").
-
 You can change the default URL for gjfy-post by setting the environment
 variable `GJFY_POSTURL`. If you downloaded gify-post via the URL, it will
 have the correct URL already configured in the script.
@@ -290,6 +297,13 @@ deploying it. What changed, and why:
   - **The store is capped** (`-max-entries`, default 10000) and single secrets
     are size limited, so creating secrets cannot exhaust memory.
   - **Creation and retrieval are rate limited** per peer address.
+  - **The web form is usable.** Upstream's anonymous form was a single line
+    input posting to an absolute `/create`, which 404s behind a reverse proxy
+    that strips a path prefix, and answered with a bare URL as plain text. It
+    now takes a multi-line secret, a click count and a validity, and answers
+    with a page. Values outside the allowed range are clamped rather than
+    trusted: the form is reachable without a token, so nothing it sends may
+    decide how long a secret lives.
   - **Auth tokens are compared in constant time**, over the whole database.
   - **Email notifications are gone**, and with them the only subprocess gjfy
     ever started. See the section above.
@@ -302,6 +316,13 @@ deploying it. What changed, and why:
     surface bought for nothing. Replaced by `flag` from the standard library.
     The `completion` subcommand went with it, and the `bou.ke/monkey` test
     dependency was dropped earlier. A test keeps `go.mod` empty.
+  - **There is now one script**, `app.js`, doing nothing but the copy button.
+    Upstream shipped none, which is the stronger position; the compromise here
+    is that it is served from the same origin under
+    `script-src 'self'` with no inline code anywhere, and every page still
+    works with javascript switched off — the secret is selectable text. The
+    logo was dropped along with the branding, so the service loads no images
+    beyond its favicon.
 
 What has *not* changed: secrets are still held in memory only and in
 plaintext, so the server can read them, and a restart still discards every

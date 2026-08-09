@@ -1,88 +1,291 @@
-html {
-	font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
-	color: #333333;
-	-webkit-text-size-adjust: 100%;
-	-ms-text-size-adjust: 100%;
+/* One card on an empty page: the whole service is three screens, so there is
+   nothing here that a layout framework would help with. */
+
+:root {
+	color-scheme: light dark;
+	--bg: #eef1f6;
+	--card: #ffffff;
+	--fg: #16181d;
+	--muted: #6b7280;
+	--line: #e4e8ee;
+	--field: #fbfcfe;
+	--accent: #4f46e5;
+	--accent-hover: #4338ca;
+	--accent-fg: #ffffff;
+	--accent-ring: rgba(79, 70, 229, 0.18);
+	--danger: #b42318;
+	--ok: #157f52;
+	--shadow: 0 1px 2px rgba(16, 24, 40, 0.05), 0 12px 32px rgba(16, 24, 40, 0.08);
 }
+
+@media (prefers-color-scheme: dark) {
+	:root {
+		--bg: #0e1116;
+		--card: #171b22;
+		--fg: #e8eaee;
+		--muted: #98a1b0;
+		--line: #262c36;
+		--field: #11151b;
+		--accent: #6d68f0;
+		--accent-hover: #837ef5;
+		--accent-ring: rgba(109, 104, 240, 0.25);
+		--danger: #f97066;
+		--ok: #47c78d;
+		--shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 12px 32px rgba(0, 0, 0, 0.45);
+	}
+}
+
+* {
+	box-sizing: border-box;
+}
+
 body {
 	margin: 0;
+	min-height: 100vh;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	padding: 24px 16px;
+	background: var(--bg);
+	color: var(--fg);
+	font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+	font-size: 16px;
+	line-height: 1.5;
+	-webkit-text-size-adjust: 100%;
 }
 
-a,
-a:active,
-a:visited {
-	color: #999;
+.card {
+	width: 100%;
+	max-width: 520px;
+	padding: 30px 28px 24px;
+	background: var(--card);
+	border: 1px solid var(--line);
+	border-radius: 18px;
+	box-shadow: var(--shadow);
+}
+
+a {
+	color: var(--accent);
 	text-decoration: none;
 }
+
 a:hover {
-	color: #549aa5;
+	text-decoration: underline;
+}
+
+.brand {
+	display: inline-flex;
+	align-items: center;
+	gap: 8px;
+	color: var(--muted);
+	font-size: 13px;
+}
+
+.brand:hover {
+	color: var(--fg);
 	text-decoration: none;
 }
 
-.gjfy-container {
-	width: auto;
-	max-width: 700px;
-	padding: 0 15px;
-	margin-right: auto;
-	margin-left: auto;
-	text-align: center;
+.brand-mark {
+	width: 17px;
+	height: 17px;
 }
 
-.gjfy-logo {
-	max-width: 200px;
-	padding: 80px 0px 20px 0px;
-}
-
-.gjfy-footer-logo-small {
-	max-height: 24px;
-	vertical-align: middle;
-}
-
-.text-center {
-	text-align: center;
+h1 {
+	margin: 16px 0 8px;
+	font-size: 24px;
+	line-height: 1.25;
+	letter-spacing: -0.01em;
 }
 
 .lead {
-	font-size: 21px;
-	margin-bottom: 40px;
-	font-weight: 300;
-	line-height: 1.4;
+	margin: 0 0 22px;
+	color: var(--muted);
+	font-size: 15px;
 }
 
-div#main ul {
-	list-style: none;
-	font-size: 21px;
-	margin-bottom: 40px;
-	font-weight: 300;
-	line-height: 1.4;
-}
+/* Form */
 
-.gjfy-form-control {
-	font-family: inherit;
+.field {
 	display: block;
-	width: 100%;
-	height: 34px;
-	padding: 6px 12px;
-	font-size: 14px;
-	color: #999 !important;
-	text-align: center;
-	line-height: 1.42857143;
-	color: #555;
-	background-color: #fff;
-	background-image: none;
-	border: 1px solid #ccc;
-	border-radius: 10px;
-	-webkit-transition: border-color ease-in-out 0.15s;
-	-o-transition: border-color ease-in-out 0.15s;
-	transition: border-color ease-in-out 0.15s;
-	margin-bottom: 60px;
+	margin-bottom: 14px;
 }
 
-.create-secret-form-control {
-	border-radius: 3px;
-	padding: 5px;
-	background-color: #fff;
-	color: #999;
-	background-image: none;
-	border: 1px solid #ccc;
+.field-label {
+	display: block;
+	margin-bottom: 6px;
+	font-size: 12.5px;
+	color: var(--muted);
+}
+
+.row {
+	display: flex;
+	gap: 12px;
+}
+
+.row .field {
+	flex: 1;
+	min-width: 0;
+}
+
+textarea,
+input,
+select {
+	width: 100%;
+	padding: 11px 12px;
+	font-family: inherit;
+	font-size: 15px;
+	color: var(--fg);
+	background: var(--field);
+	border: 1px solid var(--line);
+	border-radius: 10px;
+	outline: none;
+	transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+textarea {
+	min-height: 96px;
+	resize: vertical;
+	font-size: 14px;
+}
+
+textarea,
+.mono {
+	font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+}
+
+textarea:focus,
+input:focus,
+select:focus {
+	border-color: var(--accent);
+	box-shadow: 0 0 0 3px var(--accent-ring);
+}
+
+.btn {
+	width: 100%;
+	margin-top: 6px;
+	padding: 12px 16px;
+	font-family: inherit;
+	font-size: 15px;
+	font-weight: 600;
+	color: var(--accent-fg);
+	background: var(--accent);
+	border: 1px solid transparent;
+	border-radius: 10px;
+	cursor: pointer;
+	transition: background 0.15s, color 0.15s;
+}
+
+.btn:hover {
+	background: var(--accent-hover);
+}
+
+.btn:active {
+	transform: translateY(1px);
+}
+
+.btn-ghost {
+	width: auto;
+	margin-top: 0;
+	padding: 10px 14px;
+	font-weight: 500;
+	color: var(--accent);
+	background: transparent;
+	border-color: var(--line);
+	white-space: nowrap;
+}
+
+.btn-ghost:hover {
+	color: var(--accent-hover);
+	background: var(--field);
+}
+
+.btn-ghost.done {
+	color: var(--ok);
+}
+
+/* Link and secret boxes */
+
+.copyrow {
+	display: flex;
+	align-items: stretch;
+	gap: 8px;
+	margin: 4px 0 14px;
+}
+
+.copyrow > .mono {
+	flex: 1;
+	min-width: 0;
+}
+
+.mono {
+	font-size: 13.5px;
+}
+
+pre.secret {
+	margin: 0;
+	padding: 11px 12px;
+	background: var(--field);
+	border: 1px solid var(--line);
+	border-radius: 10px;
+	white-space: pre-wrap;
+	word-break: break-word;
+	overflow-wrap: anywhere;
+	max-height: 42vh;
+	overflow: auto;
+	user-select: all;
+}
+
+.note {
+	margin: 0 0 4px;
+	font-size: 13px;
+	color: var(--muted);
+}
+
+.note.danger {
+	color: var(--danger);
+}
+
+.actions {
+	margin: 18px 0 0;
+	font-size: 14px;
+}
+
+.meta {
+	margin: 0;
+}
+
+.meta dt {
+	font-size: 12px;
+	color: var(--muted);
+}
+
+.meta dd {
+	margin: 2px 0 12px;
+	overflow-wrap: anywhere;
+}
+
+.fineprint {
+	margin: 26px 0 0;
+	padding-top: 16px;
+	border-top: 1px solid var(--line);
+	font-size: 12px;
+	color: var(--muted);
+	text-align: center;
+}
+
+@media (max-width: 430px) {
+	.card {
+		padding: 24px 20px 20px;
+		border-radius: 16px;
+	}
+
+	.row,
+	.copyrow {
+		flex-direction: column;
+	}
+
+	.copyrow .btn {
+		width: 100%;
+	}
 }

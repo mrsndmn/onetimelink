@@ -1,23 +1,12 @@
 {{define "info"}}
-{{template "header" " - View Metadata"}}
-<h2 id="mainheading">Metadata for {{.Id}}</h2>
-<div id="main">
-<table id="info">
-<tr>
-	<th>Id</th>
-	<th>MaxClicks</th>
-	<th>Clicks</th>
-	<th>DateAdded</th>
-	<th>AuthToken</th>
-</tr>
-<tr>
-	<td><a href="{{.Url}}">{{.Id}}</a></td>
-	<td>{{.MaxClicks}}</td>
-	<td>{{.Clicks}}</td>
-	<td>{{.DateAdded}}</td>
-	<td>{{.AuthToken}}</td>
-</tr>
-</table>
-</div>
+{{template "header" "Метаданные"}}
+<h1>Метаданные</h1>
+<dl class="meta">
+	<dt>Ссылка</dt><dd><a class="mono" href="{{.Url}}">{{.Id}}</a></dd>
+	<dt>Открытий разрешено</dt><dd>{{.MaxClicks}}</dd>
+	<dt>Уже открыта</dt><dd>{{.Clicks}}</dd>
+	<dt>Создана</dt><dd>{{.DateAdded}}</dd>
+	<dt>Кем создана</dt><dd>{{.AuthToken}}</dd>
+</dl>
 {{template "footer"}}
 {{end}}

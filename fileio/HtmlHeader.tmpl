@@ -1,13 +1,20 @@
-{{define "header"}}
-<!DOCTYPE html>
-<html>
+{{define "header"}}<!DOCTYPE html>
+<html lang="ru">
 <head>
-	<title>gjfy{{.}}</title>
-	<link rel="shortcut icon" type="image/x-icon" href="favicon.ico">
-	<link rel="stylesheet" type="text/css" href="custom.css">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>{{.}}</title>
+<link rel="icon" type="image/x-icon" href="favicon.ico">
+<link rel="stylesheet" href="custom.css">
 </head>
 <body>
-<div class="gjfy-container">
-<img src="logo.png" alt="logo" class="gjfy-logo">
-<div id="content">
+<main class="card">
+<a class="brand" href="./">
+	<svg class="brand-mark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+		<rect x="4" y="10.5" width="16" height="10" rx="2.5"></rect>
+		<path d="M8 10.5V7a4 4 0 0 1 8 0v3.5"></path>
+	</svg>
+	<span>одноразовая ссылка</span>
+</a>
 {{end}}

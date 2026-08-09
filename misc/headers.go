@@ -44,8 +44,11 @@ func SecurityHeaders(h http.Handler, tls bool) http.Handler {
 		head.Set("X-Frame-Options", "DENY")
 		// Keep the secret id out of Referer headers sent to third parties.
 		head.Set("Referrer-Policy", "no-referrer")
+		// script-src is 'self' and nothing else: the only script served is
+		// the embedded copy button. No inline scripts, no external origins,
+		// so a stray attribute in a template cannot execute.
 		head.Set("Content-Security-Policy",
-			"default-src 'none'; img-src 'self'; style-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'")
+			"default-src 'none'; img-src 'self'; style-src 'self'; script-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'")
 		if tls {
 			head.Set("Strict-Transport-Security", "max-age=63072000")
 		}

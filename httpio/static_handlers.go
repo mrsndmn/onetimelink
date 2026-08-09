@@ -22,14 +22,6 @@ func HandleStaticFav() http.Handler {
 	})
 }
 
-func HandleStaticLogoSmall() http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "image/png")
-		w.WriteHeader(http.StatusOK)
-		w.Write(fileio.GjfyLogoSmall)
-	})
-}
-
 func HandleStaticCss(get AssetProvider) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		css, updated := get()
@@ -37,10 +29,12 @@ func HandleStaticCss(get AssetProvider) http.Handler {
 	})
 }
 
-func HandleStaticLogo(get AssetProvider) http.Handler {
+// HandleStaticJs serves the copy-button script. It is embedded rather than
+// reloadable: it is not styling, and a script served next to a secret should
+// only ever be the one that was compiled in.
+func HandleStaticJs(started time.Time) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		logo, updated := get()
-		http.ServeContent(w, r, fileio.LogoFileName, updated, bytes.NewReader(logo))
+		http.ServeContent(w, r, fileio.JsFileName, started, bytes.NewReader(fileio.AppJs))
 	})
 }
 

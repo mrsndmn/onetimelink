@@ -7,22 +7,19 @@ var (
 	HtmlTemplates embed.FS
 	//go:embed favicon.ico
 	Favicon []byte
-	//go:embed gjfy-logo-small.png
-	GjfyLogoSmall []byte
-	//go:embed logo.png
-	GjfyLogo []byte
 	//go:embed custom.css
 	CustomCss []byte
+	//go:embed app.js
+	AppJs []byte
 )
 
 const (
-	UserMessageViewDefaultText = `
-		The link you invoked contains a secret (a password for example)
-		somebody wants to share with you. It will be valid only for a short
-		time and you may not be able to invoke it again. Please make sure
-		you memorise the secret or write it down in an appropriate way.
-		`
+	// UserMessageViewDefaultText is what the recipient of a link reads above
+	// the secret. It can be replaced by dropping userMessageView.txt next to
+	// the binary or into the config directory.
+	UserMessageViewDefaultText = `Кто-то поделился с вами секретом — например паролем.
+	Сохраните его сейчас: ссылка одноразовая и живёт недолго.`
 	UserMessageViewFilename = "userMessageView.txt"
 	CssFileName             = "custom.css"
-	LogoFileName            = "logo.png"
+	JsFileName              = "app.js"
 )

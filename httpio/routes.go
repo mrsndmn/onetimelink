@@ -8,7 +8,6 @@ var (
 	Info        = "/i"
 	ClientShell = "/gjfy-post"
 	Fav         = "/favicon.ico"
-	LogoSmall   = "/gjfy-logo-small.png"
 	Css         = "/custom.css"
-	Logo        = "/logo.png"
+	Js          = "/app.js"
 )

@@ -51,9 +51,10 @@ func TestNewEntryDefaults(t *testing.T) {
 // The id must not be derived from the secret: doing so lets anyone who can
 // guess a secret confirm the guess by recomputing the id.
 func TestIDsAreRandomNotDerivedFromSecret(t *testing.T) {
-	st := New(0)
-	seen := make(map[string]bool)
 	const n = 500
+	// Explicit capacity: the default one is smaller than n on purpose.
+	st := New(n)
+	seen := make(map[string]bool)
 	for i := 0; i < n; i++ {
 		// Same secret, same everything: the ids must still all differ.
 		id := mustAdd(t, st, "identical-secret", 1, 1, "auth@example.org", "")
@@ -78,7 +79,7 @@ func TestAddEntryRejectsBadInput(t *testing.T) {
 	if _, err := st.NewEntry("", 1, 1, "auth@example.org", ""); err != ErrEmptySecret {
 		t.Errorf("empty secret: got %v, wanted %v", err, ErrEmptySecret)
 	}
-	long := strings.Repeat("x", maxSecretLen+1)
+	long := strings.Repeat("x", MaxSecretLen+1)
 	if _, err := st.NewEntry(long, 1, 1, "auth@example.org", ""); err != ErrSecretTooLong {
 		t.Errorf("oversized secret: got %v, wanted %v", err, ErrSecretTooLong)
 	}

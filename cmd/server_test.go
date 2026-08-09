@@ -60,14 +60,14 @@ func TestUpdateFiles(t *testing.T) {
 		{"token": "`+testToken+`", "email": "test@example.org"},
 		{"token": "secondtokensecondtoken", "email": "other@example.org"}
 	]`)
-	auth1, css1, logo1, umv1, updated1 := updateFiles()
+	auth1, css1, umv1, updated1 := updateFiles()
 	if auth1 == nil {
 		t.Fatal("auth db did not load")
 	}
 	time.Sleep(2 * time.Millisecond)
-	auth2, css2, logo2, umv2, updated2 := updateFiles()
+	auth2, css2, umv2, updated2 := updateFiles()
 	if !reflect.DeepEqual(auth1, auth2) || !reflect.DeepEqual(css1, css2) ||
-		!reflect.DeepEqual(logo1, logo2) || umv1 != umv2 {
+		umv1 != umv2 {
 		t.Errorf("running updateFiles twice gives differing results")
 	}
 	if updated1 == updated2 {
@@ -78,14 +78,14 @@ func TestUpdateFiles(t *testing.T) {
 		{"token": "`+testToken+`", "email": "test@example.org"},
 		{"token": "thirdtokenthirdtoken", "email": "foobar@example.org"}
 	]`)
-	auth3, _, _, _, _ := updateFiles()
+	auth3, _, _, _ := updateFiles()
 	if reflect.DeepEqual(auth2, auth3) {
 		t.Errorf("auth.db was not updated after changing the file")
 	}
 
 	userMessage := "foo bar baz!"
 	createUserMessageViewFile(tmpdir, userMessage)
-	_, _, _, umv3, _ := updateFiles()
+	_, _, umv3, _ := updateFiles()
 	if umv3 != userMessage {
 		t.Errorf("userMessageView was not updated from file")
 	}
@@ -166,7 +166,6 @@ func TestReloadIsConcurrencySafe(t *testing.T) {
 				a := loadedAssets()
 				_ = a.auth
 				_ = len(a.css)
-				_ = len(a.logo)
 				_ = a.userMessageView
 				_ = a.updated
 			}

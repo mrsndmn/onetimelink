@@ -1,11 +1,16 @@
 {{define "view"}}
-{{template "header" " - View Secret"}}
-<div id="main">
-<p class="lead">
-{{.UserMessageView}}
-</p>
-<p>The secret contained in this link is as follows:</p>
-<input readonly autofocus type="text" class="gjfy-form-control" value="{{.Secret}}">
+{{template "header" "Секрет"}}
+<h1>Вот секрет</h1>
+<p class="lead">{{.UserMessageView}}</p>
+<div class="copyrow">
+	<pre id="secret" class="mono secret">{{.Secret}}</pre>
+	<button class="btn btn-ghost" type="button" data-copy="secret">Копировать</button>
 </div>
+{{if gt .Remaining 0}}
+<p class="note">Ссылку можно открыть ещё раз — осталось открытий: {{.Remaining}}.</p>
+{{else}}
+<p class="note danger">Ссылка только что сгорела: второй раз она не откроется.
+Сохраните секрет сейчас.</p>
+{{end}}
 {{template "footer" .}}
 {{end}}

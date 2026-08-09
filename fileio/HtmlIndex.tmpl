@@ -1,22 +1,41 @@
-
 {{define "index"}}
-{{template "header" " - one time links"}}
-<div id="main">
-<h1>gjfy - one time links</h1>
-<p class="lead">
-	Create links that automatically disappear once clicked. On first click
-	it will show a "secret", for instance a password that somebody wants to
-	send to someone.</br>
-	As a user you normally should not need to visit this index page.
-</p>
-<ul>
-	{{if .AllowAnonymous}}<p>Create a secret below:</p>
-	<div id="create-secret-container"><form method="POST" action="/create" autocomplete="off"><input name="secret" class="create-secret-form-control" placeholder="Enter secret to share" autofocus required/><button class="create-secret-form-control">Submit</button></form></div>{{end}}
-	<li><a href="https://github.com/sstark/gjfy">
-		<img src="gjfy-logo-small.png" alt="gjfy-logo" class="gjfy-footer-logo-small"> Homepage</a>
-	<li><a href="gjfy-post">Download command line client</a>
-</ul>
-</p>
-</div>
+{{template "header" "Одноразовая ссылка"}}
+<h1>Ссылка, которая сгорает</h1>
+<p class="lead">Вставьте пароль или другой секрет — получится ссылка, которая
+откроется заданное число раз и исчезнет.</p>
+{{if .AllowAnonymous}}
+<form method="POST" action="create" autocomplete="off">
+	<label class="field">
+		<span class="field-label">Секрет</span>
+		<textarea name="secret" rows="4" maxlength="{{.MaxSecretBytes}}" placeholder="пароль, ключ, что угодно до {{.MaxSecretKB}} КБ" autofocus required spellcheck="false"></textarea>
+	</label>
+	<div class="row">
+		<label class="field">
+			<span class="field-label">Открытий</span>
+			<select name="clicks">
+				<option value="1" selected>1 раз</option>
+				<option value="2">2 раза</option>
+				<option value="3">3 раза</option>
+				<option value="5">5 раз</option>
+				<option value="10">10 раз</option>
+			</select>
+		</label>
+		<label class="field">
+			<span class="field-label">Живёт</span>
+			<select name="days">
+				<option value="1">1 день</option>
+				<option value="3">3 дня</option>
+				<option value="7" selected>7 дней</option>
+				<option value="14">14 дней</option>
+				<option value="30">30 дней</option>
+			</select>
+		</label>
+	</div>
+	<button class="btn" type="submit">Создать ссылку</button>
+</form>
+{{else}}
+<p class="note">Создание секретов через форму на этом сервере выключено — ссылки
+выдаёт только API с токеном.</p>
+{{end}}
 {{template "footer"}}
 {{end}}
