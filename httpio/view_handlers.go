@@ -38,6 +38,14 @@ type viewInfoEntry struct {
 	Remaining int
 }
 
+// confirmPage is the data behind the page that offers to reveal a secret.
+// It carries no part of the secret itself: until the visitor presses the
+// button, nothing but the id has left the store.
+type confirmPage struct {
+	Id              string
+	UserMessageView string
+}
+
 // errorPage is the data behind the "this is not available" page.
 type errorPage struct {
 	Title   string
@@ -84,9 +92,41 @@ func HandleIndex(fAllowAnonymous bool) http.Handler {
 	})
 }
 
+// HandleGet reveals a secret, but only after the recipient asks for it.
+//
+// Opening the link (GET) renders a confirmation page and consumes nothing;
+// pressing the button on it (POST) is what hands out the secret and burns the
+// link. The split exists because everything between sender and recipient
+// fetches shared URLs on its own: Telegram and Slack render previews, mail
+// gateways and antivirus proxies follow links to scan them. All of them use
+// GET. With a single GET-consuming handler, the first such visitor got the
+// secret and the recipient found a dead link — the exact opposite of what a
+// one-time link is for. Nothing in that chain issues a POST.
+//
+// There is deliberately no CSRF token: a cross-site POST has to carry the id,
+// and whoever knows the id can fetch the secret directly anyway. A token would
+// add state and ceremony without taking anything away from an attacker.
 func HandleGet(memstore *store.SecretStore, urlbase string, getMessage MessageProvider) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id := r.URL.Query().Get("id")
+
+		if r.Method != http.MethodPost {
+			// Existence is checked without consuming a click, so a link that
+			// has already been used says so plainly instead of offering a
+			// button that leads to an error.
+			if _, ok := memstore.GetEntry(id); !ok {
+				log.Printf("entry not found: %s", misc.RedactID(id))
+				renderGone(w)
+				return
+			}
+			w.WriteHeader(http.StatusOK)
+			htmlTemplates.ExecuteTemplate(w, "confirm", confirmPage{
+				Id:              id,
+				UserMessageView: getMessage(),
+			})
+			return
+		}
+
 		entry, ok := memstore.Claim(id, urlbase, Get, ApiGet)
 		if !ok {
 			log.Printf("entry not found: %s", misc.RedactID(id))

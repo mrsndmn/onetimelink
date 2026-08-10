@@ -15,7 +15,40 @@ import (
 
 func noMessage() string { return "" }
 
-func TestHandleGetShowsAndConsumes(t *testing.T) {
+// Opening the link must reveal nothing and cost nothing: link previewers and
+// scanners fetch shared URLs with GET, and used to burn the link before the
+// recipient ever saw it.
+func TestHandleGetDoesNotConsume(t *testing.T) {
+	st := store.New(0)
+	if _, err := st.NewEntry("hunter2", 1, 1, "test@example.org", "theid"); err != nil {
+		t.Fatal(err)
+	}
+	h := HandleGet(st, urlbase, noMessage)
+
+	for _, method := range []string{"GET", "HEAD"} {
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, httptest.NewRequest(method, "/g?id=theid", nil))
+		if rr.Code != http.StatusOK {
+			t.Fatalf("%s: got status %v", method, rr.Code)
+		}
+		if strings.Contains(rr.Body.String(), "hunter2") {
+			t.Errorf("%s: the secret was rendered without being asked for", method)
+		}
+		if !strings.Contains(rr.Body.String(), `method="post"`) {
+			t.Errorf("%s: no form to reveal the secret:\n%s", method, rr.Body.String())
+		}
+	}
+
+	e, ok := st.GetEntry("theid")
+	if !ok {
+		t.Fatal("opening the link consumed the secret")
+	}
+	if e.Clicks != 0 {
+		t.Errorf("opening the link consumed %d click(s)", e.Clicks)
+	}
+}
+
+func TestHandleGetRevealsOnPost(t *testing.T) {
 	st := store.New(0)
 	if _, err := st.NewEntry("hunter2", 1, 1, "test@example.org", "theid"); err != nil {
 		t.Fatal(err)
@@ -23,7 +56,7 @@ func TestHandleGetShowsAndConsumes(t *testing.T) {
 	h := HandleGet(st, urlbase, noMessage)
 
 	rr := httptest.NewRecorder()
-	h.ServeHTTP(rr, httptest.NewRequest("GET", "/g?id=theid", nil))
+	h.ServeHTTP(rr, httptest.NewRequest("POST", "/g?id=theid", nil))
 	if rr.Code != http.StatusOK {
 		t.Fatalf("got status %v", rr.Code)
 	}
@@ -32,12 +65,19 @@ func TestHandleGetShowsAndConsumes(t *testing.T) {
 	}
 
 	rr2 := httptest.NewRecorder()
-	h.ServeHTTP(rr2, httptest.NewRequest("GET", "/g?id=theid", nil))
+	h.ServeHTTP(rr2, httptest.NewRequest("POST", "/g?id=theid", nil))
 	if rr2.Code != http.StatusNotFound {
 		t.Errorf("second view returned %v, wanted 404", rr2.Code)
 	}
 	if strings.Contains(rr2.Body.String(), "hunter2") {
 		t.Error("a one-time secret was shown twice")
+	}
+
+	// And the confirmation page is gone too, rather than inviting another try.
+	rr3 := httptest.NewRecorder()
+	h.ServeHTTP(rr3, httptest.NewRequest("GET", "/g?id=theid", nil))
+	if rr3.Code != http.StatusNotFound {
+		t.Errorf("burnt link still offers a confirmation page (status %v)", rr3.Code)
 	}
 }
 
@@ -49,10 +89,26 @@ func TestHandleGetEscapesSecret(t *testing.T) {
 		t.Fatal(err)
 	}
 	rr := httptest.NewRecorder()
-	HandleGet(st, urlbase, noMessage).ServeHTTP(rr, httptest.NewRequest("GET", "/g?id=xss", nil))
+	HandleGet(st, urlbase, noMessage).ServeHTTP(rr, httptest.NewRequest("POST", "/g?id=xss", nil))
 
 	if strings.Contains(rr.Body.String(), "<script>") {
 		t.Errorf("secret was not escaped:\n%s", rr.Body.String())
+	}
+}
+
+// The id travels into the form action, which is a URL context.
+func TestHandleGetEscapesIDInForm(t *testing.T) {
+	st := store.New(0)
+	const nasty = `x" onx="alert(1)`
+	if _, err := st.NewEntry("s", 1, 1, "test@example.org", nasty); err != nil {
+		t.Fatal(err)
+	}
+	rr := httptest.NewRecorder()
+	HandleGet(st, urlbase, noMessage).ServeHTTP(rr,
+		httptest.NewRequest("GET", "/g?id="+url.QueryEscape(nasty), nil))
+
+	if strings.Contains(rr.Body.String(), `onx=`) {
+		t.Errorf("the id broke out of the attribute:\n%s", rr.Body.String())
 	}
 }
 
