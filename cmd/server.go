@@ -1,7 +1,9 @@
 package cmd
 
 import (
+	"context"
 	"crypto/tls"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -13,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/sstark/gjfy/admin"
 	"github.com/sstark/gjfy/fileio"
 	"github.com/sstark/gjfy/httpio"
 	"github.com/sstark/gjfy/misc"
@@ -38,6 +41,10 @@ const (
 	writeTimeout      = 30 * time.Second
 	idleTimeout       = 60 * time.Second
 	maxHeaderBytes    = 1 << 16
+
+	// How long a stop waits for requests in flight. Short on purpose: a
+	// visitor mid-download is worth a couple of seconds, not a stuck unit.
+	shutdownGrace = 5 * time.Second
 
 	// Rate limits, per client address.
 	newBurst    = 10
@@ -67,6 +74,7 @@ var (
 	fTLS            bool
 	fAllowAnonymous bool
 	fMaxEntries     int
+	fStatsSocket    string
 	scheme          = "http://"
 )
 
@@ -145,6 +153,8 @@ flags:
 	boolVar(fs, &fTLS, "tls", "s", TLSDefault, "Use TLS connection")
 	boolVar(fs, &fAllowAnonymous, "allow-anonymous", "a", allowAnonymousDefault, "Allow secrets by anonymous users")
 	intVar(fs, &fMaxEntries, "max-entries", "m", maxEntriesDefault, "Maximum number of secrets held in memory")
+	stringVar(fs, &fStatsSocket, "stats-socket", "S", "",
+		"Path of a unix socket answering how many secrets are held (empty: no socket)")
 	return fs
 }
 
@@ -202,6 +212,21 @@ func runServer(args []string) {
 	memstore := store.New(fMaxEntries)
 	go memstore.Expiry(time.Minute * expiryCheck)
 
+	// Root-only introspection, off unless a path was given. See package admin
+	// for why this is a socket and not a route.
+	stats, err := admin.Serve(fStatsSocket, memstore, startTime)
+	switch {
+	case err != nil:
+		// Deliberately not fatal. The service exists to hold secrets; a
+		// missing report about them is an inconvenience, while exiting here
+		// would meet Restart=always and turn every cause — a sandbox that
+		// forbids unix sockets, a read-only directory, a typo in the path —
+		// into a crash loop that destroys the whole store.
+		log.Printf("stats socket unavailable, continuing without it: %s\n", err)
+	case stats != nil:
+		log.Printf("answering stats on %s\n", fStatsSocket)
+	}
+
 	reload()
 
 	sighup := make(chan os.Signal, 1)
@@ -228,6 +253,8 @@ func runServer(args []string) {
 		MaxHeaderBytes:    maxHeaderBytes,
 	}
 
+	stopped := shutdownOnSignal(srv, stats, memstore)
+
 	log.Printf("using '%s' as URL base\n", getURLBase())
 	if fTLS {
 		cf := fileio.TryFile(crtFile)
@@ -240,9 +267,60 @@ func runServer(args []string) {
 		}
 		srv.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12}
 		log.Println("listening on", fListen, "with TLS")
-		log.Fatal(srv.ListenAndServeTLS(cf, kf))
+		err = srv.ListenAndServeTLS(cf, kf)
 	} else {
 		log.Println("listening on", fListen, "without TLS")
-		log.Fatal(srv.ListenAndServe())
+		err = srv.ListenAndServe()
 	}
+	if !errors.Is(err, http.ErrServerClosed) {
+		log.Fatal(err)
+	}
+	<-stopped
+	log.Println("stopped")
+}
+
+// shutdownOnSignal turns SIGTERM/SIGINT into an orderly stop and, on the way
+// out, records what the stop costs.
+//
+// The count matters because it is unknowable afterwards: the store is memory
+// only, so a restart takes every live link with it and leaves nothing behind
+// to count. A line in the journal is the only place that number can survive.
+func shutdownOnSignal(srv *http.Server, stats *admin.Server, memstore *store.SecretStore) <-chan struct{} {
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, syscall.SIGTERM, syscall.SIGINT)
+	return shutdownWhen(sig, func() { signal.Stop(sig) }, srv, stats, memstore)
+}
+
+// shutdownWhen is shutdownOnSignal without the signal plumbing, so that the
+// stop can be exercised by a test.
+//
+// release hands the signals back to the runtime. It matters: a registration
+// that outlives this goroutine swallows every later SIGTERM, and the process
+// then cannot be stopped by the usual means at all.
+func shutdownWhen(sig <-chan os.Signal, release func(), srv *http.Server, stats *admin.Server, memstore *store.SecretStore) <-chan struct{} {
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		defer release()
+		s := <-sig
+		log.Println(stopNotice(s, memstore.Len()))
+		stats.Close()
+		ctx, cancel := context.WithTimeout(context.Background(), shutdownGrace)
+		defer cancel()
+		if err := srv.Shutdown(ctx); err != nil {
+			log.Printf("shutdown: %s\n", err)
+		}
+	}()
+	return done
+}
+
+// stopNotice is the line that survives the stop. It names the count even when
+// it is zero: "nothing was lost" is worth as much in a journal as a number.
+//
+// The count is taken when the signal arrives, not after requests in flight
+// have drained: a reveal during those few seconds shifts it by one. Taking it
+// later would be more exact and less reliable — if the stop is then cut short
+// by SIGKILL, the number is not written down at all.
+func stopNotice(sig os.Signal, live int) string {
+	return fmt.Sprintf("got %s, stopping: %d live secret(s) will be lost", sig, live)
 }

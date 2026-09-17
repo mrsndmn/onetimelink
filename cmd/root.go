@@ -14,6 +14,7 @@ const rootUsage = `gjfy is a web service for creating and providing one-time cli
 
 usage:
   gjfy server [flags]   run the web service (see: gjfy server --help)
+  gjfy stats [flags]    report how many secrets are held right now (root only)
   gjfy version          print the version
   gjfy help             print this text
 `
@@ -32,6 +33,8 @@ func Execute() {
 	switch os.Args[1] {
 	case "server":
 		runServer(os.Args[2:])
+	case "stats":
+		runStats(os.Args[2:])
 	case "version", "--version", "-V":
 		fmt.Printf("gjfy %s\n", versionOrDevel())
 	case "help", "--help", "-h":

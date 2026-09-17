@@ -204,6 +204,16 @@ select:focus {
 	color: var(--ok);
 }
 
+/* The page that shows a secret gets a wider card on a roomy screen: a 4 KB
+   config wrapped into a phone-width column is unreadable. It is scoped with
+   :has() rather than a modifier class because every page shares one header
+   template; browsers without :has() simply keep the narrow card. */
+@media (min-width: 900px) {
+	body:has(.secret) .card {
+		max-width: 880px;
+	}
+}
+
 /* Link and secret boxes */
 
 .copyrow {
@@ -218,8 +228,21 @@ select:focus {
 	min-width: 0;
 }
 
+/* The row stretches its children, and the secret box is now as tall as the
+   screen allows — without this the copy button next to it grows into a
+   several-hundred-pixel slab. Scoped to the secret: next to the one-line link
+   field on the "created" page, stretching is what makes the two the same
+   height. */
+.copyrow > .secret ~ .btn {
+	align-self: flex-start;
+}
+
+/* 16px exactly: below that, iOS Safari zooms the page when the link field is
+   focused, and a zoomed page is where selection handles start missing what
+   they were aimed at. The secret and the link are the text this service
+   exists for; they can afford the room. */
 .mono {
-	font-size: 13.5px;
+	font-size: 16px;
 }
 
 pre.secret {
@@ -231,9 +254,21 @@ pre.secret {
 	white-space: pre-wrap;
 	word-break: break-word;
 	overflow-wrap: anywhere;
-	max-height: 42vh;
+	/* The box is as tall as the secret needs, up to most of the viewport: a
+	   4 KB key in a fixed 200px window is nothing but scrolling. The cap is
+	   in vh, so a phone still has the copy button in reach while a desktop
+	   shows the whole thing at once. */
+	max-height: 62vh;
 	overflow: auto;
-	user-select: all;
+	/* The corner can be dragged to trade height with the rest of the page,
+	   within the same cap. */
+	resize: vertical;
+	/* Deliberately not "user-select: all": that makes a single click select
+	   the entire node, so a part of the secret cannot be picked out at all —
+	   which is the common case when the secret is a config or a URL with a
+	   password in it. Copying the whole thing is what the button is for. */
+	-webkit-user-select: text;
+	user-select: text;
 }
 
 .note {

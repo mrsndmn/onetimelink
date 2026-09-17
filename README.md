@@ -141,7 +141,44 @@ To let visitors create secrets from the web form, without an auth token, add
 credential (a private network, or an unguessable path prefix in front of it):
 the form is otherwise open to anyone who can reach the port.
 
-Use `gjfy server --help` for help.
+To let an operator see how much is in the store, give the server a unix socket
+to answer on:
+
+    gjfy server --stats-socket /run/gjfy/stats.sock
+
+Off unless asked for. The socket is created 0600, and the packaged systemd unit
+puts it in a directory only root and the service user may enter — so the answer
+is available locally and to root alone. It is deliberately not a route on the
+public mux: a route is one proxy rule away from the internet, and a token
+guarding it would end up in shell history and logs.
+
+### Subcommand `stats`
+
+Prints how many secrets are held right now and, therefore, how many a restart
+would destroy. Secrets live in memory only, so this number exists nowhere else
+— when the process is gone, so is the answer.
+
+    gjfy stats                       # summary
+    gjfy stats -v                    # one line per live secret
+    gjfy stats --json                # the raw report
+    gjfy stats --socket /path/to.sock
+
+Sample output:
+
+    live secrets:  2 of 256  (a restart would lose all 2)
+    running since: 2026-08-18 21:37 UTC, up 29d 15h
+    since then:    16 created, 11 read, 3 expired
+    next expiry:   2026-09-23 01:55 UTC (in 5d 12h)
+
+The report carries metadata only: when a secret was stored, when it expires,
+how many reads it has left, its size and the address of the token that created
+it. It never carries a secret or an id — the id is the sole credential
+protecting a secret, and a report is a thing people paste into chats.
+
+On the way down the server also records the cost of the stop in its log, since
+that is the last moment the number can be known:
+
+    got terminated, stopping: 2 live secret(s) will be lost
 
 ### Subcommand `completion`
 

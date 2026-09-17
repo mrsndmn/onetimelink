@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"log"
+	"sort"
 	"sync"
 	"time"
 )
@@ -71,6 +72,14 @@ type SecretStore struct {
 	mu         sync.RWMutex
 	entries    map[string]StoreEntry
 	maxEntries int
+
+	// Counters since start, guarded by the same mutex as the entries.
+	// They exist because the entries themselves are deliberately
+	// short-lived: by the time anyone asks what this instance has been
+	// doing, the evidence has already deleted itself.
+	created uint64
+	claimed uint64
+	expired uint64
 }
 
 // New returns an empty store holding at most maxEntries secrets.
@@ -138,6 +147,7 @@ func (st *SecretStore) AddEntry(e StoreEntry, id string) (string, error) {
 		return "", ErrStoreFull
 	}
 	st.entries[id] = e
+	st.created++
 	return id, nil
 }
 
@@ -171,6 +181,61 @@ func (st *SecretStore) Len() int {
 // user what the limit is instead of just refusing.
 func (st *SecretStore) MaxEntries() int {
 	return st.maxEntries
+}
+
+// EntryMeta describes one live secret for an operator, without any part of
+// the secret itself and without its id: the id is the sole credential
+// protecting the secret, so even a report only root can read does not carry
+// one. Everything here is metadata that answers "what would a restart cost".
+type EntryMeta struct {
+	Created   time.Time `json:"created"`
+	Expires   time.Time `json:"expires"`
+	Clicks    int       `json:"clicks"`
+	MaxClicks int       `json:"max_clicks"`
+	Bytes     int       `json:"bytes"`
+	// Author is the address the creating token belongs to, or the marker the
+	// web form stores; it is never the token itself.
+	Author string `json:"author"`
+}
+
+// Stats is a snapshot of the store: what is in memory right now and what has
+// passed through it since the process started.
+type Stats struct {
+	Live       int         `json:"live"`
+	MaxEntries int         `json:"max_entries"`
+	Created    uint64      `json:"created"`
+	Claimed    uint64      `json:"claimed"`
+	Expired    uint64      `json:"expired"`
+	Entries    []EntryMeta `json:"entries"`
+}
+
+// Stats returns a snapshot of the store, oldest entry first.
+func (st *SecretStore) Stats() Stats {
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+
+	s := Stats{
+		Live:       len(st.entries),
+		MaxEntries: st.maxEntries,
+		Created:    st.created,
+		Claimed:    st.claimed,
+		Expired:    st.expired,
+		Entries:    make([]EntryMeta, 0, len(st.entries)),
+	}
+	for _, e := range st.entries {
+		s.Entries = append(s.Entries, EntryMeta{
+			Created:   e.DateAdded,
+			Expires:   e.DateAdded.Add(expFactor(e.ValidFor)),
+			Clicks:    e.Clicks,
+			MaxClicks: e.MaxClicks,
+			Bytes:     len(e.Secret),
+			Author:    e.AuthToken,
+		})
+	}
+	sort.Slice(s.Entries, func(i, j int) bool {
+		return s.Entries[i].Created.Before(s.Entries[j].Created)
+	})
+	return s
 }
 
 // makeInfo augments an entry with computed fields. It does no locking.
@@ -218,6 +283,7 @@ func (st *SecretStore) Claim(id, urlbase, urlget, urlapiget string) (si StoreEnt
 	} else {
 		delete(st.entries, id)
 	}
+	st.claimed++
 	st.mu.Unlock()
 
 	return makeInfo(entry, id, urlbase, urlget, urlapiget), true
@@ -240,6 +306,7 @@ func (st *SecretStore) expireOnce(now time.Time) int {
 			n++
 		}
 	}
+	st.expired += uint64(n)
 	return n
 }
 
